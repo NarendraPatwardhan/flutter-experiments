@@ -146,6 +146,8 @@ void paintVtImages(
     final img = p.image;
     if (img is! ui.Image) continue;
     // drawImageRect is stable on Flutter 3.24 (paintImage has no sourceRect).
-    canvas.drawImageRect(img, p.src, p.dest, paint);
+    final src = p.src ??
+        ui.Rect.fromLTWH(0, 0, img.width.toDouble(), img.height.toDouble());
+    canvas.drawImageRect(img, src, p.dest, paint);
   }
 }
