@@ -92,6 +92,12 @@ pick_file(
     basename = "root.zig",
 )
 
+pick_file(
+    name = "uucode_tables_file",
+    srcs = [":uucode_staged"],
+    basename = "tables.zig",
+)
+
 zig_library(
     name = "uucode",
     main = ":uucode_staged_root",
