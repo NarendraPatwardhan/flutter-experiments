@@ -1,9 +1,22 @@
 # libghostty-vt via rules_zig (product Zig 0.16.0 only).
-# Declared Zig modules + codegen — not shell `zig build` of Ghostty's build.zig.
+# Codegen: Starlark ctx.actions.run + zig helper tools — no shell genrules.
 
 load("@rules_zig//zig:defs.bzl", "zig_binary", "zig_library", "zig_shared_library")
+load(":codegen.bzl", "pick_file", "run_stdout_file", "uucode_staged_src")
 
 package(default_visibility = ["//visibility:public"])
+
+# --- Helper tools (Zig) -------------------------------------------------------
+
+zig_binary(
+    name = "chdir_exec",
+    main = "tools/chdir_exec.zig",
+)
+
+zig_binary(
+    name = "stdout_to_file",
+    main = "tools/stdout_to_file.zig",
+)
 
 # --- Option packages ----------------------------------------------------------
 
@@ -19,7 +32,7 @@ zig_library(
     import_name = "terminal_options",
 )
 
-# --- uucode: generate tables, stage one src tree, compile as one module -------
+# --- uucode -------------------------------------------------------------------
 
 UUCODE_GENERATE_SRCS = [
     "@uucode//:src/ascii.zig",
@@ -39,22 +52,21 @@ UUCODE_GENERATE_SRCS = [
     "@uucode//:src/utf8.zig",
 ]
 
-# Files that belong in the runtime uucode module (no generate.zig).
-UUCODE_LIB_BASENAMES = [
-    "ascii.zig",
-    "build_config.zig",
-    "code_point.zig",
-    "components.zig",
-    "config.zig",
-    "fields.zig",
-    "get.zig",
-    "grapheme.zig",
-    "multi_slice.zig",
-    "quirks.zig",
-    "root.zig",
-    "storage.zig",
-    "types.zig",
-    "utf8.zig",
+UUCODE_LIB_SRCS = [
+    "@uucode//:src/ascii.zig",
+    "@uucode//:src/build_config.zig",
+    "@uucode//:src/code_point.zig",
+    "@uucode//:src/components.zig",
+    "@uucode//:src/config.zig",
+    "@uucode//:src/fields.zig",
+    "@uucode//:src/get.zig",
+    "@uucode//:src/grapheme.zig",
+    "@uucode//:src/multi_slice.zig",
+    "@uucode//:src/quirks.zig",
+    "@uucode//:src/root.zig",
+    "@uucode//:src/storage.zig",
+    "@uucode//:src/types.zig",
+    "@uucode//:src/utf8.zig",
 ]
 
 zig_binary(
@@ -64,59 +76,23 @@ zig_binary(
     extra_srcs = ["@uucode//:ucd"],
 )
 
-# Produce tables.zig then stage a full src/ tree so @import("tables.zig") resolves
-# next to get.zig (rules_zig relative imports use the on-disk path of the importer).
-genrule(
-    name = "uucode_staged_src",
-    srcs = ["@uucode//:tree"],
-    tools = [":uucode_generate"],
-    outs = ["uucode_staged/src/%s" % f for f in UUCODE_LIB_BASENAMES] + [
-        "uucode_staged/src/tables.zig",
-    ],
-    cmd = """
-set -euo pipefail
-ROOT=""
-for f in $(locations @uucode//:tree); do
-  case "$$f" in
-    */src/root.zig)
-      ROOT=$$(cd "$$(dirname "$$f")/.." && pwd)
-      break
-      ;;
-  esac
-done
-if [ -z "$$ROOT" ] || [ ! -d "$$ROOT/ucd" ]; then
-  echo "uucode root/ucd not found" >&2
-  exit 1
-fi
-STAGED=$$(mktemp -d)
-mkdir -p "$$STAGED/src"
-# Copy lib sources into stage (no generate.zig).
-for f in ascii.zig build_config.zig code_point.zig components.zig config.zig \\
-         fields.zig get.zig grapheme.zig multi_slice.zig quirks.zig root.zig \\
-         storage.zig types.zig utf8.zig; do
-  cp -f "$$ROOT/src/$$f" "$$STAGED/src/$$f"
-done
-GEN=$(location :uucode_generate)
-GEN_ABS=$$(cd $$(dirname "$$GEN") && pwd)/$$(basename "$$GEN")
-cd "$$ROOT"
-"$$GEN_ABS" "$$STAGED/src/tables.zig"
-# Emit declared outs (genrule does not pre-create nested out dirs).
-OUTDIR=$$(dirname $(location uucode_staged/src/root.zig))
-mkdir -p "$$OUTDIR"
-cp -a "$$STAGED/src/." "$$OUTDIR/"
-""",
+uucode_staged_src(
+    name = "uucode_staged",
+    lib_srcs = UUCODE_LIB_SRCS,
+    uucode_tree = "@uucode//:tree",
+    generator = ":uucode_generate",
 )
 
-UUCODE_STAGED_SRCS = [
-    "uucode_staged/src/%s" % f for f in UUCODE_LIB_BASENAMES
-] + [
-    "uucode_staged/src/tables.zig",
-]
+pick_file(
+    name = "uucode_staged_root",
+    srcs = [":uucode_staged"],
+    basename = "root.zig",
+)
 
 zig_library(
     name = "uucode",
-    main = "uucode_staged/src/root.zig",
-    srcs = UUCODE_STAGED_SRCS,
+    main = ":uucode_staged_root",
+    srcs = [":uucode_staged"],
     import_name = "uucode",
 )
 
@@ -167,21 +143,16 @@ zig_binary(
     ],
 )
 
-genrule(
-    name = "gen_ghostty_unicode_tables",
-    tools = [
-        ":props_unigen",
-        ":symbols_unigen",
-    ],
-    outs = [
-        "gen/unicode_tables.zig",
-        "gen/symbols_tables.zig",
-    ],
-    cmd = """
-set -euo pipefail
-$(location :props_unigen) > $(location gen/unicode_tables.zig)
-$(location :symbols_unigen) > $(location gen/symbols_tables.zig)
-""",
+run_stdout_file(
+    name = "unicode_tables_zig",
+    tool = ":props_unigen",
+    out = "gen/unicode_tables.zig",
+)
+
+run_stdout_file(
+    name = "symbols_tables_zig",
+    tool = ":symbols_unigen",
+    out = "gen/symbols_tables.zig",
 )
 
 zig_library(
