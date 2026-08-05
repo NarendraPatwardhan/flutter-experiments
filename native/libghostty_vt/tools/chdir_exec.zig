@@ -1,18 +1,15 @@
 //! Run a program after chdir to a root directory.
 //! Usage: chdir_exec <root> <program> [args...]
-//! Resolves program and args to absolute paths before chdir so outputs under
-//! the execroot keep working (e.g. UCD reads use cwd-relative "ucd/…").
+//! Resolves program and args to absolute paths before chdir.
 
 const std = @import("std");
 
 pub fn main() !void {
-    var gpa_state: std.heap.GeneralPurposeAllocator(.{}) = .{};
-    defer _ = gpa_state.deinit();
-    const gpa = gpa_state.allocator();
+    const gpa = std.heap.page_allocator;
 
     var argv = try std.process.argsWithAllocator(gpa);
     defer argv.deinit();
-    _ = argv.next(); // argv0
+    _ = argv.next();
 
     const root = argv.next() orelse usage();
     const program_rel = argv.next() orelse usage();
@@ -29,15 +26,11 @@ pub fn main() !void {
     defer child_argv.deinit(gpa);
     try child_argv.append(gpa, abs_program);
     while (argv.next()) |a| {
-        const abs = try absPath(gpa, cwd, a);
-        try child_argv.append(gpa, abs);
+        try child_argv.append(gpa, try absPath(gpa, cwd, a));
     }
     defer {
-        // first is abs_program (already deferred); free the rest
         var i: usize = 1;
-        while (i < child_argv.items.len) : (i += 1) {
-            gpa.free(child_argv.items[i]);
-        }
+        while (i < child_argv.items.len) : (i += 1) gpa.free(child_argv.items[i]);
     }
 
     var child = std.process.Child.init(child_argv.items, gpa);
@@ -55,8 +48,6 @@ fn usage() noreturn {
 }
 
 fn absPath(gpa: std.mem.Allocator, cwd: []const u8, p: []const u8) ![]u8 {
-    if (std.fs.path.isAbsolute(p)) {
-        return try gpa.dupe(u8, p);
-    }
+    if (std.fs.path.isAbsolute(p)) return try gpa.dupe(u8, p);
     return try std.fs.path.resolve(gpa, &.{ cwd, p });
 }

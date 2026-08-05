@@ -4,13 +4,11 @@
 const std = @import("std");
 
 pub fn main() !void {
-    var gpa_state: std.heap.GeneralPurposeAllocator(.{}) = .{};
-    defer _ = gpa_state.deinit();
-    const gpa = gpa_state.allocator();
+    const gpa = std.heap.page_allocator;
 
     var argv = try std.process.argsWithAllocator(gpa);
     defer argv.deinit();
-    _ = argv.next(); // argv0
+    _ = argv.next();
 
     const out_path = argv.next() orelse usage();
     const program = argv.next() orelse usage();
@@ -18,9 +16,7 @@ pub fn main() !void {
     var child_argv: std.ArrayList([]const u8) = .empty;
     defer child_argv.deinit(gpa);
     try child_argv.append(gpa, program);
-    while (argv.next()) |a| {
-        try child_argv.append(gpa, a);
-    }
+    while (argv.next()) |a| try child_argv.append(gpa, a);
 
     const out_file = try std.fs.cwd().createFile(out_path, .{});
     defer out_file.close();
