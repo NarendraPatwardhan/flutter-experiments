@@ -105,6 +105,14 @@ zig_library(
     import_name = "uucode",
 )
 
+# Forces full analysis of the uucode module (not just zig_library no-op).
+zig_binary(
+    name = "uucode_smoke",
+    main = "smoke_uucode.zig",
+    deps = [":uucode"],
+    zigopts = ["-OReleaseFast"],
+)
+
 # --- @ghostty pin: unicode table gens + libghostty-vt -------------------------
 
 UNICODE_ZIG = [
