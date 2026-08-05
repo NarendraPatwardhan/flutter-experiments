@@ -38,18 +38,17 @@ class HomePage extends StatefulWidget {
 }
 
 class _HomePageState extends State<HomePage> {
-  String _status = 'Starting AgentOS (loom)…';
+  String _status = 'Starting AgentOS (posix guest)…';
   String _output = '';
   bool _busy = true;
 
   @override
   void initState() {
     super.initState();
-    // Auto-run so launching the binary shows guest output immediately.
     SchedulerBinding.instance.addPostFrameCallback((_) => _smoke());
   }
 
-  ({String lib, String kernel, String? loom})? _locateAssets() {
+  ({String lib, String kernel, String? image})? _locateAssets() {
     final exeDir = File(Platform.resolvedExecutable).parent.path;
     final libCandidates = [
       '$exeDir/lib/libagentos_flutter_host.so',
@@ -59,13 +58,16 @@ class _HomePageState extends State<HomePage> {
       '$exeDir/data/kernel.wasm',
       '$exeDir/kernel.wasm',
     ];
-    final loomCandidates = [
+    // Prefer posix; accept loom.tar if present (future).
+    final imageCandidates = [
+      '$exeDir/data/posix.tar',
       '$exeDir/data/loom.tar',
+      '$exeDir/posix.tar',
       '$exeDir/loom.tar',
     ];
     String? libPath;
     String? kernelPath;
-    String? loomPath;
+    String? imagePath;
     for (final p in libCandidates) {
       if (File(p).existsSync()) {
         libPath = p;
@@ -78,14 +80,14 @@ class _HomePageState extends State<HomePage> {
         break;
       }
     }
-    for (final p in loomCandidates) {
+    for (final p in imageCandidates) {
       if (File(p).existsSync()) {
-        loomPath = p;
+        imagePath = p;
         break;
       }
     }
     if (libPath == null || kernelPath == null) return null;
-    return (lib: libPath, kernel: kernelPath, loom: loomPath);
+    return (lib: libPath, kernel: kernelPath, image: imagePath);
   }
 
   Future<void> _smoke() async {
@@ -100,61 +102,65 @@ class _HomePageState extends State<HomePage> {
         setState(() {
           _status =
               'Native assets missing.\n'
-              'Need lib/libagentos_flutter_host.so and data/kernel.wasm '
-              '(and data/loom.tar for a full shell).';
+              'Need lib/libagentos_flutter_host.so, data/kernel.wasm, data/posix.tar.';
           _busy = false;
         });
         return;
       }
-      if (assets.loom == null) {
+      if (assets.image == null) {
         setState(() {
           _status =
-              'loom.tar missing under data/ — rebuild //:linux_product_bundle.';
+              'Guest image missing (data/posix.tar). Rebuild //:linux_product_bundle.';
           _busy = false;
         });
         return;
       }
 
-      setState(() => _status = 'Booting kernel + loom image…');
+      final imageName = assets.image!.split(Platform.pathSeparator).last;
+      setState(() => _status = 'Booting kernel + $imageName…');
       final vm = await AgentOsVm.bootFromFiles(
         kernelPath: assets.kernel,
-        imagePath: assets.loom,
+        imagePath: assets.image,
         libraryPath: assets.lib,
       );
       try {
-        // Extra ticks so the login shell can paint if it was still settling.
         for (var i = 0; i < 64; i++) {
           final s = await vm.tick();
-          if (s == AgentOsTickState.exited) break;
-          if (s == AgentOsTickState.waiting) break;
+          if (s == AgentOsTickState.exited || s == AgentOsTickState.waiting) {
+            break;
+          }
         }
         final bootBytes = await vm.takeOutput();
         final bootText = utf8.decode(bootBytes, allowMalformed: true);
 
         setState(() => _status = 'Running guest commands…');
-        final echo = await vm.exec('echo Hello from AgentOS loom');
+        final echo = await vm.exec('echo Hello from AgentOS');
         final uname = await vm.exec('uname -a');
         final ls = await vm.exec('ls /bin | head -n 20');
 
         final text = StringBuffer()
-          ..writeln('=== shell output after boot ===')
-          ..writeln(bootText.isEmpty ? '(empty — prompt may be quiet)' : bootText)
+          ..writeln('=== shell after boot ($imageName) ===')
+          ..writeln(
+            bootText.isEmpty ? '(no capture yet — shell may be quiet)' : bootText,
+          )
           ..writeln()
-          ..writeln('=== exec: echo Hello from AgentOS loom  (exit ${echo.exitCode}) ===')
+          ..writeln(
+            '=== echo Hello from AgentOS  (exit ${echo.exitCode}) ===',
+          )
           ..writeln(utf8.decode(echo.stdout, allowMalformed: true))
           ..write(utf8.decode(echo.stderr, allowMalformed: true))
           ..writeln()
-          ..writeln('=== exec: uname -a  (exit ${uname.exitCode}) ===')
+          ..writeln('=== uname -a  (exit ${uname.exitCode}) ===')
           ..writeln(utf8.decode(uname.stdout, allowMalformed: true))
           ..write(utf8.decode(uname.stderr, allowMalformed: true))
           ..writeln()
-          ..writeln('=== exec: ls /bin | head  (exit ${ls.exitCode}) ===')
+          ..writeln('=== ls /bin | head  (exit ${ls.exitCode}) ===')
           ..writeln(utf8.decode(ls.stdout, allowMalformed: true))
           ..write(utf8.decode(ls.stderr, allowMalformed: true));
 
         setState(() {
           _status =
-              'OK — loom guest ran (echo exit=${echo.exitCode}, uname exit=${uname.exitCode})';
+              'OK — guest ran (echo=${echo.exitCode}, uname=${uname.exitCode}, ls=${ls.exitCode})';
           _output = text.toString();
         });
       } finally {
@@ -180,12 +186,12 @@ class _HomePageState extends State<HomePage> {
           crossAxisAlignment: CrossAxisAlignment.stretch,
           children: [
             Text(
-              'AgentOS on Flutter (loom)',
+              'AgentOS on Flutter',
               style: theme.textTheme.headlineMedium,
             ),
             const SizedBox(height: 8),
             Text(
-              'Native host · kernel.wasm + loom.tar · no JS path',
+              'Native host · kernel + posix guest image · auto-runs on launch',
               style: theme.textTheme.bodyMedium?.copyWith(
                 color: theme.colorScheme.onSurfaceVariant,
               ),

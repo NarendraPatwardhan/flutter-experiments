@@ -10,10 +10,12 @@ filegroup(
     srcs = ["@agent-os//memcontainers/kernel/rust:kernel"],
 )
 
-# Loom guest image (posix + shell + luau) — public @agent-os image tar.
+# Guest image: posix (base + full coreutils). Loom = posix + Luau; Luau currently
+# fails zig CacheCheckFailed when built as nested @agent-os under this product pin.
+# Posix still gives /bin/sh and real commands for the Flutter host smoke path.
 filegroup(
-    name = "agentos_loom",
-    srcs = ["@agent-os//memcontainers/images:loom"],
+    name = "agentos_posix",
+    srcs = ["@agent-os//memcontainers/images:posix"],
 )
 
 # Product C ABI over KernelHost + kernel wasm for staging next to the Linux app.
@@ -22,23 +24,23 @@ alias(
     actual = "//native/agentos_flutter_host:agentos_flutter_host",
 )
 
-# Stage kernel + loom image + opt+stripped host .so.
+# Stage kernel + posix image + opt+stripped host .so.
 genrule(
     name = "agentos_native_bundle",
     srcs = [
         ":agentos_kernel",
-        ":agentos_loom",
+        ":agentos_posix",
         ":agentos_flutter_host",
     ],
     outs = [
         "agentos_native/kernel.wasm",
-        "agentos_native/loom.tar",
+        "agentos_native/posix.tar",
         "agentos_native/libagentos_flutter_host.so",
     ],
     cmd = """
 set -euo pipefail
 cp $(location :agentos_kernel) $(location agentos_native/kernel.wasm)
-cp $(location :agentos_loom) $(location agentos_native/loom.tar)
+cp $(location :agentos_posix) $(location agentos_native/posix.tar)
 cp $(location :agentos_flutter_host) $(location agentos_native/libagentos_flutter_host.so)
 """,
 )
@@ -75,10 +77,12 @@ for f in $(locations :agentos_native_bundle); do
   case "$$f" in
     *libagentos_flutter_host.so) cp -f "$$f" "$$WORKDIR/lib/" ;;
     *kernel.wasm) cp -f "$$f" "$$WORKDIR/data/" ;;
+    *posix.tar) cp -f "$$f" "$$WORKDIR/data/" ;;
   esac
 done
 test -f "$$WORKDIR/lib/libagentos_flutter_host.so"
 test -f "$$WORKDIR/data/kernel.wasm"
+test -f "$$WORKDIR/data/posix.tar"
 tar -C "$$WORKDIR" -czf $(location linux_product.tar.gz) .
 """,
 )
