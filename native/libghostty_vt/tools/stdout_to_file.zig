@@ -5,9 +5,9 @@
 const std = @import("std");
 
 pub fn main(init: std.process.Init) !void {
-    const gpa = init.arena.allocator();
+    const gpa = init.gpa;
 
-    var args_iter = try init.args.iterateAllocator(gpa);
+    var args_iter = try init.minimal.args.initAllocator(gpa);
     defer args_iter.deinit();
     _ = args_iter.next();
 
@@ -15,6 +15,7 @@ pub fn main(init: std.process.Init) !void {
     const program = args_iter.next() orelse usage();
 
     var child_argv: std.ArrayList([]const u8) = .empty;
+    defer child_argv.deinit(gpa);
     try child_argv.append(gpa, program);
     while (args_iter.next()) |a| {
         try child_argv.append(gpa, a);
