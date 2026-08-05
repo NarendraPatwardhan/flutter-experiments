@@ -22,10 +22,10 @@ alias(
     actual = "//native/agentos_flutter_host:agentos_flutter_host",
 )
 
-# libghostty-vt (rules_zig / Zig 0.16.0)
+# libghostty-vt — Ghostty pin adapter (//third_party/ghostty), not native/
 alias(
     name = "libghostty_vt",
-    actual = "//native/libghostty_vt:libghostty_vt",
+    actual = "//third_party/ghostty:libghostty_vt",
 )
 
 # Stage kernel + loom image + opt+stripped host .so + libghostty-vt.

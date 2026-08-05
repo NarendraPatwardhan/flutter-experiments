@@ -1,2 +1,187 @@
-# Package marker so //third_party/ghostty:ghostty.BUILD is loadable for @ghostty.
+# Pin adapter for Ghostty libghostty-vt.
+# Upstream sources: @ghostty (http_archive). Unicode: @uucode (http_archive).
+# Product Zig: 0.16.0 via rules_zig only. No shell genrules.
+
+load("@rules_zig//zig:defs.bzl", "zig_binary", "zig_library", "zig_shared_library")
+load(":codegen.bzl", "pick_file", "run_stdout_file", "uucode_staged_src")
+
+package(default_visibility = ["//visibility:public"])
+
 exports_files(["ghostty.BUILD"])
+
+# --- Codegen helper tools (Zig) -----------------------------------------------
+
+zig_binary(
+    name = "chdir_exec",
+    main = "tools/chdir_exec.zig",
+)
+
+zig_binary(
+    name = "stdout_to_file",
+    main = "tools/stdout_to_file.zig",
+)
+
+# --- Options Ghostty expects as packages --------------------------------------
+
+zig_library(
+    name = "build_options",
+    main = "options/build_options.zig",
+    import_name = "build_options",
+)
+
+zig_library(
+    name = "terminal_options",
+    main = "options/terminal_options.zig",
+    import_name = "terminal_options",
+)
+
+# --- @uucode pin: generate tables + zig module --------------------------------
+
+UUCODE_GENERATE_SRCS = [
+    "@uucode//:src/ascii.zig",
+    "@uucode//:src/build_config.zig",
+    "@uucode//:src/code_point.zig",
+    "@uucode//:src/components.zig",
+    "@uucode//:src/config.zig",
+    "@uucode//:src/fields.zig",
+    "@uucode//:src/generate.zig",
+    "@uucode//:src/get.zig",
+    "@uucode//:src/grapheme.zig",
+    "@uucode//:src/multi_slice.zig",
+    "@uucode//:src/quirks.zig",
+    "@uucode//:src/root.zig",
+    "@uucode//:src/storage.zig",
+    "@uucode//:src/types.zig",
+    "@uucode//:src/utf8.zig",
+]
+
+UUCODE_LIB_SRCS = [
+    "@uucode//:src/ascii.zig",
+    "@uucode//:src/build_config.zig",
+    "@uucode//:src/code_point.zig",
+    "@uucode//:src/components.zig",
+    "@uucode//:src/config.zig",
+    "@uucode//:src/fields.zig",
+    "@uucode//:src/get.zig",
+    "@uucode//:src/grapheme.zig",
+    "@uucode//:src/multi_slice.zig",
+    "@uucode//:src/quirks.zig",
+    "@uucode//:src/root.zig",
+    "@uucode//:src/storage.zig",
+    "@uucode//:src/types.zig",
+    "@uucode//:src/utf8.zig",
+]
+
+zig_binary(
+    name = "uucode_generate",
+    main = "@uucode//:src/generate.zig",
+    srcs = UUCODE_GENERATE_SRCS,
+    extra_srcs = ["@uucode//:ucd"],
+)
+
+uucode_staged_src(
+    name = "uucode_staged",
+    lib_srcs = UUCODE_LIB_SRCS,
+    uucode_tree = "@uucode//:tree",
+    generator = ":uucode_generate",
+)
+
+pick_file(
+    name = "uucode_staged_root",
+    srcs = [":uucode_staged"],
+    basename = "root.zig",
+)
+
+zig_library(
+    name = "uucode",
+    main = ":uucode_staged_root",
+    srcs = [":uucode_staged"],
+    import_name = "uucode",
+)
+
+# --- @ghostty pin: unicode table gens + libghostty-vt -------------------------
+
+UNICODE_ZIG = [
+    "@ghostty//:src/unicode/lut.zig",
+    "@ghostty//:src/unicode/props.zig",
+    "@ghostty//:src/unicode/props_table.zig",
+    "@ghostty//:src/unicode/props_uucode.zig",
+    "@ghostty//:src/unicode/symbols_table.zig",
+    "@ghostty//:src/unicode/symbols_uucode.zig",
+    "@ghostty//:src/unicode/grapheme.zig",
+    "@ghostty//:src/unicode/main.zig",
+]
+
+zig_library(
+    name = "unicode_tables_stub",
+    main = "stubs/unicode_tables_stub.zig",
+    import_name = "unicode_tables",
+)
+
+zig_library(
+    name = "symbols_tables_stub",
+    main = "stubs/symbols_tables_stub.zig",
+    import_name = "symbols_tables",
+)
+
+zig_binary(
+    name = "props_unigen",
+    main = "@ghostty//:src/unicode/props_uucode.zig",
+    srcs = UNICODE_ZIG,
+    deps = [
+        ":uucode",
+        ":unicode_tables_stub",
+        ":symbols_tables_stub",
+    ],
+)
+
+zig_binary(
+    name = "symbols_unigen",
+    main = "@ghostty//:src/unicode/symbols_uucode.zig",
+    srcs = UNICODE_ZIG,
+    deps = [
+        ":uucode",
+        ":unicode_tables_stub",
+        ":symbols_tables_stub",
+    ],
+)
+
+run_stdout_file(
+    name = "unicode_tables_zig",
+    tool = ":props_unigen",
+    out = "gen/unicode_tables.zig",
+)
+
+run_stdout_file(
+    name = "symbols_tables_zig",
+    tool = ":symbols_unigen",
+    out = "gen/symbols_tables.zig",
+)
+
+zig_library(
+    name = "unicode_tables",
+    main = ":gen/unicode_tables.zig",
+    import_name = "unicode_tables",
+)
+
+zig_library(
+    name = "symbols_tables",
+    main = ":gen/symbols_tables.zig",
+    import_name = "symbols_tables",
+)
+
+# Public pin product: libghostty-vt.so
+zig_shared_library(
+    name = "libghostty_vt",
+    main = "@ghostty//:src/lib_vt.zig",
+    srcs = ["@ghostty//:zig_srcs"],
+    extra_srcs = ["@ghostty//:headers"],
+    deps = [
+        ":build_options",
+        ":terminal_options",
+        ":uucode",
+        ":unicode_tables",
+        ":symbols_tables",
+    ],
+    shared_lib_name = "libghostty-vt.so",
+)

@@ -1,4 +1,4 @@
-# Package marker so //third_party/uucode:… is loadable for @uucode http_archive.
+# Pin package: patches + build file for @uucode http_archive.
 exports_files([
     "uucode.BUILD",
     "0001-single-module-imports.patch",

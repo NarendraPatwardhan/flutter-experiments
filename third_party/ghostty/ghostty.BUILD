@@ -1,5 +1,4 @@
-# @ghostty pin — sources for rules_zig (no shell zig build).
-# Compilation targets live in //native/libghostty_vt (product module graph).
+# Injected into @ghostty (http_archive). Source filegroups only — no product logic.
 
 exports_files(glob(["**/*"]))
 
@@ -38,17 +37,5 @@ filegroup(
 filegroup(
     name = "headers",
     srcs = glob(["include/ghostty/**/*.h"]),
-    visibility = ["//visibility:public"],
-)
-
-filegroup(
-    name = "lib_vt_main",
-    srcs = ["src/lib_vt.zig"],
-    visibility = ["//visibility:public"],
-)
-
-filegroup(
-    name = "uucode_config",
-    srcs = ["src/build/uucode_config.zig"],
     visibility = ["//visibility:public"],
 )

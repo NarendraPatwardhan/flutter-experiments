@@ -1,4 +1,4 @@
-"""Codegen for libghostty-vt — Starlark actions only (no shell genrules)."""
+"""Codegen for the Ghostty pin adapter — Starlark actions only (no shell genrules)."""
 
 load("@bazel_skylib//lib:paths.bzl", "paths")
 
@@ -36,7 +36,6 @@ def _uucode_staged_src_impl(ctx):
     if root_zig == None:
         fail("could not find uucode src/root.zig in uucode_tree")
 
-    # Package root (contains src/ and ucd/).
     uucode_root = paths.dirname(root_zig.dirname)
 
     ctx.actions.run(
@@ -70,7 +69,7 @@ uucode_staged_src = rule(
             mandatory = True,
         ),
         "_chdir_exec": attr.label(
-            default = Label("//native/libghostty_vt:chdir_exec"),
+            default = Label("//third_party/ghostty:chdir_exec"),
             executable = True,
             cfg = "exec",
         ),
@@ -100,7 +99,7 @@ run_stdout_file = rule(
         "srcs": attr.label_list(allow_files = True),
         "out": attr.output(mandatory = True),
         "_stdout_to_file": attr.label(
-            default = Label("//native/libghostty_vt:stdout_to_file"),
+            default = Label("//third_party/ghostty:stdout_to_file"),
             executable = True,
             cfg = "exec",
         ),

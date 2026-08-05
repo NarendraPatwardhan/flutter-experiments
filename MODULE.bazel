@@ -72,8 +72,11 @@ use_repo(zig, "zig_toolchains")
 register_toolchains("@rules_zig//zig/target:all")
 register_toolchains("@zig_toolchains//:all")
 
-# Ghostty source pin (minimum_zig_version 0.16.0). Built with rules_zig targets,
-# not shell genrule wrapping `zig build`.
+# ---------------------------------------------------------------------------
+# Pins: Ghostty + uucode (adapter targets under //third_party/ghostty)
+# ---------------------------------------------------------------------------
+# Upstream sources only in @ghostty / @uucode. Build graph lives in
+# //third_party/ghostty (pin adapter), not //native. native/ = AgentOS host only.
 http_archive = use_repo_rule("@bazel_tools//tools/build_defs/repo:http.bzl", "http_archive")
 
 http_archive(
@@ -86,13 +89,12 @@ http_archive(
     ],
 )
 
-# uucode — Ghostty lib-vt Unicode dependency (same pin as Ghostty build.zig.zon).
+# uucode — Ghostty lib-vt Unicode dep (same pin as Ghostty build.zig.zon).
 http_archive(
     name = "uucode",
     build_file = "//third_party/uucode:uucode.BUILD",
     patch_strip = 1,
     patches = [
-        # Single-module imports (Zig 0.16) + Ghostty build_config as src/build_config.zig.
         "//third_party/uucode:0001-single-module-imports.patch",
     ],
     sha256 = "7e76fc7fab1e7ac728c52b35bbb3e5b8c639841abfc7fe1a4bcb13050594bc9e",
