@@ -1,10 +1,13 @@
-import 'dart:convert';
 import 'dart:io';
+import 'dart:typed_data';
 
 import 'package:flutter/material.dart';
 import 'package:flutter/scheduler.dart';
 
 import 'agent_os/vm.dart';
+import 'vt/frame.dart';
+import 'vt/painter.dart';
+import 'vt/session.dart';
 
 void main() {
   runApp(const App());
@@ -38,21 +41,33 @@ class HomePage extends StatefulWidget {
 }
 
 class _HomePageState extends State<HomePage> {
-  String _status = 'Starting AgentOS (loom guest)…';
-  String _output = '';
+  String _status = 'Starting AgentOS + libghostty-vt…';
+  VtFrame _frame = VtFrame.empty(cols: 80, rows: 28);
   bool _busy = true;
+  GhosttyVtSession? _vt;
 
   @override
   void initState() {
     super.initState();
-    SchedulerBinding.instance.addPostFrameCallback((_) => _smoke());
+    SchedulerBinding.instance.addPostFrameCallback((_) => _runSession());
   }
 
-  ({String lib, String kernel, String? image})? _locateAssets() {
+  @override
+  void dispose() {
+    _vt?.close();
+    super.dispose();
+  }
+
+  ({String hostLib, String? vtLib, String kernel, String? image})?
+      _locateAssets() {
     final exeDir = File(Platform.resolvedExecutable).parent.path;
-    final libCandidates = [
+    final hostCandidates = [
       '$exeDir/lib/libagentos_flutter_host.so',
       '$exeDir/libagentos_flutter_host.so',
+    ];
+    final vtCandidates = [
+      '$exeDir/lib/libghostty-vt.so',
+      '$exeDir/libghostty-vt.so',
     ];
     final kernelCandidates = [
       '$exeDir/data/kernel.wasm',
@@ -64,12 +79,20 @@ class _HomePageState extends State<HomePage> {
       '$exeDir/loom.tar',
       '$exeDir/posix.tar',
     ];
-    String? libPath;
+
+    String? hostPath;
+    String? vtPath;
     String? kernelPath;
     String? imagePath;
-    for (final p in libCandidates) {
+    for (final p in hostCandidates) {
       if (File(p).existsSync()) {
-        libPath = p;
+        hostPath = p;
+        break;
+      }
+    }
+    for (final p in vtCandidates) {
+      if (File(p).existsSync()) {
+        vtPath = p;
         break;
       }
     }
@@ -85,16 +108,44 @@ class _HomePageState extends State<HomePage> {
         break;
       }
     }
-    if (libPath == null || kernelPath == null) return null;
-    return (lib: libPath, kernel: kernelPath, image: imagePath);
+    if (hostPath == null || kernelPath == null) return null;
+    return (
+      hostLib: hostPath,
+      vtLib: vtPath,
+      kernel: kernelPath,
+      image: imagePath,
+    );
   }
 
-  Future<void> _smoke() async {
+  void _paintVt(GhosttyVtSession vt) {
+    final frame = vt.snapshot();
+    if (!mounted) return;
+    setState(() => _frame = frame);
+  }
+
+  void _vtBanner(GhosttyVtSession vt, String title) {
+    // Dim separator via SGR, then bold title.
+    vt.writeText(
+      '\r\n\x1b[90m────────────────────────────────────────\x1b[0m\r\n'
+      '\x1b[1;36m$title\x1b[0m\r\n',
+    );
+  }
+
+  void _vtWriteOutput(GhosttyVtSession vt, Uint8List data) {
+    if (data.isEmpty) return;
+    vt.writeGuest(data);
+  }
+
+  Future<void> _runSession() async {
+    _vt?.close();
+    _vt = null;
+
     setState(() {
       _busy = true;
       _status = 'Looking for native assets…';
-      _output = '';
+      _frame = VtFrame.empty(cols: 80, rows: 28);
     });
+
     try {
       final assets = _locateAssets();
       if (assets == null) {
@@ -102,6 +153,14 @@ class _HomePageState extends State<HomePage> {
           _status =
               'Native assets missing.\n'
               'Need lib/libagentos_flutter_host.so, data/kernel.wasm, data/loom.tar.';
+          _busy = false;
+        });
+        return;
+      }
+      if (assets.vtLib == null) {
+        setState(() {
+          _status =
+              'libghostty-vt.so missing under lib/. Rebuild //:linux_product_bundle.';
           _busy = false;
         });
         return;
@@ -115,12 +174,26 @@ class _HomePageState extends State<HomePage> {
         return;
       }
 
+      setState(() => _status = 'Opening libghostty-vt…');
+      final vt = GhosttyVtSession.open(
+        libraryPath: assets.vtLib,
+        cols: 80,
+        rows: 28,
+      );
+      _vt = vt;
+
+      vt.writeText(
+        '\x1b[1;32mAgentOS · Flutter · libghostty-vt\x1b[0m\r\n'
+        'VT grid ${vt.cols}×${vt.rows}  ·  guest → vt_write → render_state\r\n',
+      );
+      _paintVt(vt);
+
       final imageName = assets.image!.split(Platform.pathSeparator).last;
       setState(() => _status = 'Booting kernel + $imageName…');
       final vm = await AgentOsVm.bootFromFiles(
         kernelPath: assets.kernel,
         imagePath: assets.image,
-        libraryPath: assets.lib,
+        libraryPath: assets.hostLib,
       );
       try {
         for (var i = 0; i < 64; i++) {
@@ -130,48 +203,60 @@ class _HomePageState extends State<HomePage> {
           }
         }
         final bootBytes = await vm.takeOutput();
-        final bootText = utf8.decode(bootBytes, allowMalformed: true);
+        _vtBanner(vt, 'shell after boot ($imageName)');
+        if (bootBytes.isEmpty) {
+          vt.writeText('(no capture yet — shell may be quiet)\r\n');
+        } else {
+          _vtWriteOutput(vt, bootBytes);
+        }
+        _paintVt(vt);
 
         setState(() => _status = 'Running guest commands…');
-        final echo = await vm.exec('echo Hello from AgentOS');
-        final uname = await vm.exec('uname -a');
-        final ls = await vm.exec('ls /bin | head -n 20');
 
-        final text = StringBuffer()
-          ..writeln('=== shell after boot ($imageName) ===')
-          ..writeln(
-            bootText.isEmpty ? '(no capture yet — shell may be quiet)' : bootText,
-          )
-          ..writeln()
-          ..writeln(
-            '=== echo Hello from AgentOS  (exit ${echo.exitCode}) ===',
-          )
-          ..writeln(utf8.decode(echo.stdout, allowMalformed: true))
-          ..write(utf8.decode(echo.stderr, allowMalformed: true))
-          ..writeln()
-          ..writeln('=== uname -a  (exit ${uname.exitCode}) ===')
-          ..writeln(utf8.decode(uname.stdout, allowMalformed: true))
-          ..write(utf8.decode(uname.stderr, allowMalformed: true))
-          ..writeln()
-          ..writeln('=== ls /bin | head  (exit ${ls.exitCode}) ===')
-          ..writeln(utf8.decode(ls.stdout, allowMalformed: true))
-          ..write(utf8.decode(ls.stderr, allowMalformed: true));
+        Future<void> runCmd(String cmd) async {
+          final r = await vm.exec(cmd);
+          _vtBanner(vt, '$cmd  (exit ${r.exitCode})');
+          _vtWriteOutput(vt, r.stdout);
+          if (r.stderr.isNotEmpty) {
+            vt.writeText('\x1b[31m');
+            _vtWriteOutput(vt, r.stderr);
+            vt.writeText('\x1b[0m');
+          }
+          _paintVt(vt);
+        }
+
+        await runCmd('echo Hello from AgentOS');
+        await runCmd('uname -a');
+        await runCmd('ls /bin | head -n 20');
+
+        // Demo styled VT that never came from the guest.
+        _vtBanner(vt, 'VT style check');
+        vt.writeText(
+          'plain  \x1b[1mbold\x1b[0m  \x1b[32mgreen\x1b[0m  '
+          '\x1b[38;2;255;128;0morange\x1b[0m  \x1b[4munderline\x1b[0m\r\n',
+        );
+        _paintVt(vt);
 
         setState(() {
           _status =
-              'OK — guest ran (echo=${echo.exitCode}, uname=${uname.exitCode}, ls=${ls.exitCode})';
-          _output = text.toString();
+              'OK — guest ran through VT (${vt.cols}×${vt.rows} cells painted)';
         });
       } finally {
         await vm.close();
       }
     } catch (e, st) {
+      // Surface error both in status and (if VT up) on the grid.
+      final msg = 'Error: $e';
+      try {
+        _vt?.writeText('\r\n\x1b[1;31m$msg\x1b[0m\r\n');
+        _vt?.writeText(st.toString());
+        if (_vt != null) _paintVt(_vt!);
+      } catch (_) {}
       setState(() {
-        _status = 'Error: $e';
-        _output = '$st';
+        _status = msg;
       });
     } finally {
-      setState(() => _busy = false);
+      if (mounted) setState(() => _busy = false);
     }
   }
 
@@ -180,7 +265,7 @@ class _HomePageState extends State<HomePage> {
     final theme = Theme.of(context);
     return Scaffold(
       body: Padding(
-        padding: const EdgeInsets.all(24),
+        padding: const EdgeInsets.all(16),
         child: Column(
           crossAxisAlignment: CrossAxisAlignment.stretch,
           children: [
@@ -188,37 +273,37 @@ class _HomePageState extends State<HomePage> {
               'AgentOS on Flutter',
               style: theme.textTheme.headlineMedium,
             ),
-            const SizedBox(height: 8),
+            const SizedBox(height: 4),
             Text(
-              'Native host · kernel + loom guest image · auto-runs on launch',
+              'Native host · loom guest · libghostty-vt paint path',
               style: theme.textTheme.bodyMedium?.copyWith(
                 color: theme.colorScheme.onSurfaceVariant,
               ),
             ),
-            const SizedBox(height: 16),
+            const SizedBox(height: 12),
             if (_busy) const LinearProgressIndicator(),
             if (!_busy)
-              FilledButton(
-                onPressed: _smoke,
-                child: const Text('Run again'),
+              Align(
+                alignment: Alignment.centerLeft,
+                child: FilledButton(
+                  onPressed: _runSession,
+                  child: const Text('Run again'),
+                ),
               ),
-            const SizedBox(height: 16),
+            const SizedBox(height: 8),
             Text(_status, style: theme.textTheme.bodyLarge),
             const SizedBox(height: 12),
             Expanded(
-              child: DecoratedBox(
-                decoration: BoxDecoration(
-                  color: theme.colorScheme.surfaceContainerHighest,
-                  borderRadius: BorderRadius.circular(8),
-                ),
-                child: SingleChildScrollView(
-                  padding: const EdgeInsets.all(12),
-                  child: SelectableText(
-                    _output.isEmpty ? '…' : _output,
-                    style: theme.textTheme.bodySmall?.copyWith(
-                      fontFamily: 'monospace',
+              child: ClipRRect(
+                borderRadius: BorderRadius.circular(8),
+                child: DecoratedBox(
+                  decoration: BoxDecoration(
+                    border: Border.all(
+                      color: theme.colorScheme.outlineVariant,
                     ),
+                    borderRadius: BorderRadius.circular(8),
                   ),
+                  child: VtView(frame: _frame, fontSize: 12),
                 ),
               ),
             ),

@@ -2,11 +2,13 @@ import 'package:flutter_test/flutter_test.dart';
 import 'package:flutter_bazel_hello/main.dart';
 
 void main() {
-  testWidgets('shows greeting', (tester) async {
+  testWidgets('shows AgentOS host chrome', (tester) async {
     await tester.pumpWidget(const App());
 
-    expect(find.text('Hello, Linux'), findsOneWidget);
-    expect(find.textContaining('ready to morph'), findsOneWidget);
-    expect(find.textContaining('rules_flutter'), findsOneWidget);
+    expect(find.text('AgentOS on Flutter'), findsOneWidget);
+    expect(
+      find.textContaining('libghostty-vt'),
+      findsWidgets,
+    );
   });
 }
