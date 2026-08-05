@@ -67,3 +67,5 @@ Ship tree: `//:linux_product_bundle` → `linux_product.tar.gz` with `lib/libage
 ## Later (same model)
 
 `exec` / `svc_call` / snapshot / `relay_next` + respond — mirror NIF surface as needed for the terminal product.
+
+Working expansion sketch (not sacred; not SYSTEM.md): **[aos-c-api.md](aos-c-api.md)**.

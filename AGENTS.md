@@ -29,6 +29,16 @@ Primary ship target: **`//:linux_product_bundle`**. Also: `//:app.linux`, `//:ag
 - **Native host only.** Never use the AgentOS JS/browser path (`sdk-js`, `mc-core.mjs`, browserify). See SYSTEM.md §2.4.
 - FFI: C ABI over `KernelHost` (`//native/agentos_flutter_host`), not the Rustler NIF. See `docs/native-host-ffi.md`.
 
+## Alpha — break and refactor freely
+
+This product is **alpha**. Shipping a path once does **not** freeze it.
+
+- Implemented code is not sacred. Prefer the right shape over preserving last week’s demo.
+- You may delete, rewrite, or replace subsystems (FFI surface, VT paint, main smoke flow, packaging) when that advances the vision.
+- Do **not** refuse a better design because “we already implemented X.”
+- Do **not** pile compatibility shims around dead demo structure. Replace it.
+- Still respect permanent constraints (zero local analysis, AgentOS pin model, native host only, no commit of `dist/` / tarballs).
+
 ## Artifacts
 
 - Stage runnables under `dist/` (gitignored).
