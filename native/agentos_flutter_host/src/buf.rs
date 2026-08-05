@@ -81,7 +81,7 @@ pub unsafe extern "C" fn aos_bytes_free(b: *mut AosBytes) {
     }
     let b = &mut *b;
     if !b.ptr.is_null() && b.len > 0 {
-        let layout = std::alloc::Layout::from_size_align(b.len(), 1).expect("layout");
+        let layout = std::alloc::Layout::from_size_align(b.len, 1).expect("layout");
         std::alloc::dealloc(b.ptr, layout);
     }
     b.ptr = std::ptr::null_mut();
