@@ -48,6 +48,17 @@ Do not treat these as the primary product:
 - AgentOS as a prebuilt release download that replaces Bazel labels.
 - Local full Flutter SDK analysis and large host-side Bazel analysis.
 
+### 2.4 Host path: native only (no JavaScript AgentOS host)
+
+This product is a **native** host (Flutter on Linux, later mobile).
+
+- Do **not** use the AgentOS **JavaScript / browser** host path.
+- Do **not** depend on `@agent-os//memcontainers/sdk-js/…`, `mc-core.mjs`, or browserify of the JS core.
+- Do **not** copy search-experience’s browser worker packaging as the model for this host.
+- Integrate AgentOS through the **native** host contract (for example kernel Wasm, guests, FFI/C/Dart as required).
+
+search-experience may use JS. This repository does not.
+
 ---
 
 ## 3. System shape
@@ -78,8 +89,9 @@ Follow the product pattern used in `../search-experience`:
 Do **not** use these as the permanent AgentOS integration model:
 
 - `local_path_override` to a developer machine path as the only pin.
-- GitHub Release zips of kernel or mc-core as a substitute for `@agent-os//…` build labels.
+- GitHub Release zips of kernel (or other runtime artifacts) as a substitute for `@agent-os//…` build labels.
 - Copy of the full AgentOS monorepo into this repository.
+- The AgentOS **JS/sdk-js** host stack (see §2.4).
 
 ### 3.3 What “built from the pin” means
 

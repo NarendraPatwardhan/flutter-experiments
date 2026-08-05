@@ -26,6 +26,7 @@ Primary target: **`//:app.linux`**. AgentOS pin smoke: **`//:agentos_kernel`**. 
 - Do **not** substitute GitHub release zips for `@agent-os//…` labels.
 - Patches live under `third_party/agent-os/`.
 - Root re-hosts `hermetic_cc` → `@zig_sdk`.
+- **Native host only.** Never use the AgentOS JS/browser path (`sdk-js`, `mc-core.mjs`, browserify). See SYSTEM.md §2.4.
 
 ## Artifacts
 
