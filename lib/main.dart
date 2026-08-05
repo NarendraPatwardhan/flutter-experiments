@@ -78,11 +78,34 @@ class _HomePageState extends State<HomePage> with SingleTickerProviderStateMixin
     )..repeat(reverse: true);
 
     SchedulerBinding.instance.addPostFrameCallback((_) {
+      // Remeasure after the first frame so fontconfig has resolved a real
+      // mono face (first measure can hit a placeholder with a fat advance,
+      // which then spaces every glyph).
       final m = VtMetrics.measure(fontSize: 13);
-      if (mounted) {
-        setState(() => _metrics = m);
-      }
+      if (!mounted) return;
+      setState(() => _metrics = m);
       unawaited(_startSession());
+      // One more measure next frame — some hosts only bind the face after
+      // the first TextPainter touch.
+      SchedulerBinding.instance.addPostFrameCallback((_) {
+        if (!mounted) return;
+        final m2 = VtMetrics.measure(fontSize: 13);
+        if (m2.cellWidth != _metrics.cellWidth ||
+            m2.cellHeight != _metrics.cellHeight ||
+            m2.fontFamily != _metrics.fontFamily) {
+          setState(() => _metrics = m2);
+          unawaited(
+            _session.resize(
+              _layoutCols,
+              _layoutRows,
+              m2.cellWidth.round(),
+              m2.cellHeight.round(),
+              padL: _gridPadding.left.round(),
+              padT: _gridPadding.top.round(),
+            ),
+          );
+        }
+      });
     });
   }
 

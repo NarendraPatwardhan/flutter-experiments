@@ -4,9 +4,9 @@ import 'package:flutter/painting.dart';
 
 /// Font-derived terminal grid metrics — Ghostty `src/font/Metrics.zig`.
 ///
-/// Cell size is the mono face advance and line height (rounded to whole
-/// pixels). The window is never stretched into the cell size; leftover space
-/// is padding (`src/renderer/size.zig`).
+/// Cell size **is** the mono face advance and line height. If [cellWidth]
+/// drifts above the painted advance, per-cell paint opens a hole between
+/// every glyph (and coalesced runs open a hole at every SGR style break).
 class VtMetrics {
   const VtMetrics({
     required this.cellWidth,
@@ -49,10 +49,13 @@ class VtMetrics {
   /// Thickness used for strikethrough / overline (same stroke as underline).
   double get decorationThickness => underlineThickness;
 
-  /// True monospaced faces only. Avoid Propo / dual-width Nerd aliases.
+  /// True monospaced faces only. Prefer `* Mono` / `* NFM` / `* NL` names —
+  /// never Propo / dual-width Nerd aliases (those measure wide and paint narrow).
   static const List<String> fontFamilyFallback = [
     'JetBrainsMono Nerd Font Mono',
     'JetBrainsMono NFM',
+    'JetBrainsMonoNL Nerd Font Mono',
+    'JetBrainsMonoNL NFM',
     'JetBrains Mono NL',
     'JetBrains Mono',
     'Liberation Mono',
@@ -72,20 +75,21 @@ class VtMetrics {
   /// - cell_height = round(ascent - descent + line_gap)
   /// - cell_baseline from bottom, face centered in rounded cell
   ///
-  /// Do **not** force `TextStyle.height: 1.0` when measuring — that collapses
-  /// the line height to em-size and produces half-height cells. Do **not**
-  /// clamp advance to 0.75em: JetBrains Mono is ~0.77em (10px @ 13pt).
+  /// Do **not** force `TextStyle.height: 1.0` when measuring line height —
+  /// that collapses cells. Do **not** invent advances; probe the live face.
   factory VtMetrics.measure({
     double fontSize = 13,
     String? fontFamily,
     FontWeight fontWeight = FontWeight.w400,
   }) {
-    final family = fontFamily ?? fontFamilyFallback.first;
+    final picked = _pickMonoFamily(
+      preferred: fontFamily,
+      fontSize: fontSize,
+      fontWeight: fontWeight,
+    );
 
-    // Style used for both measure and paint. No forced height — Ghostty uses
-    // the face’s real line metrics.
     final style = TextStyle(
-      fontFamily: family,
+      fontFamily: picked.family,
       fontFamilyFallback: fontFamilyFallback,
       fontSize: fontSize,
       fontWeight: fontWeight,
@@ -93,30 +97,18 @@ class VtMetrics {
       wordSpacing: 0,
     );
 
-    // --- advance: average of a long mono run (stable vs single-glyph bearing)
-    const n = 64;
-    final run = _layout(style, 'M' * n);
-    var faceWidth = run.width / n;
-    if (faceWidth <= 0) {
-      faceWidth = fontSize * 0.6;
-    }
-
-    // --- line height / baseline from a tall sample (natural metrics)
+    // Live mono advance — single glyph and a long run must agree closely.
+    final faceWidth = _monoAdvance(style);
     final face = _layout(style, r'Hg|$_');
     final faceHeight = math.max(face.preferredLineHeight, face.height);
-    // Baseline distance from top of the layout box.
     final baselineFromTop = face.computeDistanceToActualBaseline(
       TextBaseline.alphabetic,
     );
 
-    // Ghostty Metrics.calc: integer cell size.
+    // Ghostty Metrics.calc: integer cell size from unrounded face metrics.
     final cellW = math.max(1.0, faceWidth.roundToDouble());
     final cellH = math.max(1.0, faceHeight.roundToDouble());
 
-    // cell_baseline is from BOTTOM. Center face in the rounded cell height
-    // the same way Metrics.zig does:
-    //   face_baseline (from bottom of face box) ≈ faceHeight - baselineFromTop
-    //   then shift by half the rounding delta.
     final faceBaselineFromBottom = faceHeight - baselineFromTop;
     var cellBaseline =
         (faceBaselineFromBottom - (cellH - faceHeight) / 2).roundToDouble();
@@ -124,22 +116,18 @@ class VtMetrics {
 
     final underlineThickness = math.max(1.0, (fontSize * 0.08).ceilToDouble());
     final topToBaseline = cellH - cellBaseline;
-    // Ghostty estimate: one thickness below baseline.
     final underlinePos = (topToBaseline + 1).clamp(
       0.0,
       cellH - underlineThickness,
     );
-    // Strikethrough ~ mid x-height (halfway from cell top to baseline).
     final strikethroughPos = (topToBaseline * 0.55).clamp(
       0.0,
       cellH - underlineThickness,
     );
-    // Overline sits near the top of the cell, one thickness in.
     final overlinePos = underlineThickness.clamp(
       0.0,
       cellH - underlineThickness,
     );
-    // Cursor bar ~12% of cell width (Ghostty default thickness is config).
     final cursorThickness = math.max(1.0, (cellW * 0.12).roundToDouble());
 
     return VtMetrics(
@@ -152,9 +140,82 @@ class VtMetrics {
       overlinePosition: overlinePos,
       cursorThickness: cursorThickness,
       fontSize: fontSize,
-      fontFamily: family,
+      fontFamily: picked.family,
       style: style,
     );
+  }
+
+  /// Advance width of the face used for [style] (same path as paint).
+  static double advanceOf(TextStyle style) => _monoAdvance(style);
+
+  static double _monoAdvance(TextStyle style) {
+    // Prefer the tighter of single-glyph and long-run averages so a buggy
+    // run metric cannot inflate cellW (which opens gaps between every glyph).
+    final single = _layout(style, 'M').width;
+    const n = 64;
+    final run = _layout(style, 'M' * n).width / n;
+    var w = single;
+    if (run > 0) {
+      w = math.min(w <= 0 ? run : w, run);
+    }
+    // Cross-check other mono keys; take the max so W/@ still fit the cell
+    // without rounding *up* past what M reported by more than 0.5px.
+    for (final ch in ['W', '0', '@']) {
+      final cw = _layout(style, ch).width;
+      if (cw > 0 && cw < w + 0.51) {
+        w = math.max(w, cw);
+      }
+    }
+    if (w <= 0) {
+      w = (style.fontSize ?? 13) * 0.6;
+    }
+    return w;
+  }
+
+  /// Pick a family whose `i` and `M` advances nearly match (true mono).
+  static ({String family}) _pickMonoFamily({
+    String? preferred,
+    required double fontSize,
+    required FontWeight fontWeight,
+  }) {
+    final candidates = <String>[
+      if (preferred != null && preferred.isNotEmpty) preferred,
+      ...fontFamilyFallback,
+    ];
+
+    String? best;
+    var bestScore = double.negativeInfinity;
+
+    for (final family in candidates) {
+      final style = TextStyle(
+        fontFamily: family,
+        fontFamilyFallback: const ['monospace'],
+        fontSize: fontSize,
+        fontWeight: fontWeight,
+        letterSpacing: 0,
+        wordSpacing: 0,
+      );
+      final m = _layout(style, 'M').width;
+      final i = _layout(style, 'i').width;
+      final w = _layout(style, 'W').width;
+      if (m <= 0) continue;
+      // Mono score: i≈M≈W. Propo faces score poorly (i much narrower).
+      final mono = 1.0 - ((m - i).abs() + (m - w).abs()) / m;
+      // Prefer named mono faces slightly.
+      final nameBonus = family.toLowerCase().contains('mono') ||
+              family.toLowerCase().contains('nfm')
+          ? 0.05
+          : 0.0;
+      // Reject obvious proportional (i less than 70% of M).
+      if (i < m * 0.7) continue;
+      final score = mono + nameBonus;
+      if (score > bestScore) {
+        bestScore = score;
+        best = family;
+      }
+    }
+
+    return (family: best ?? fontFamilyFallback.last);
   }
 
   static TextPainter _layout(TextStyle style, String text) {
@@ -162,18 +223,19 @@ class VtMetrics {
       text: TextSpan(text: text, style: style),
       textDirection: TextDirection.ltr,
       maxLines: 1,
+      ellipsis: null,
+      textWidthBasis: TextWidthBasis.parent,
       textHeightBehavior: const TextHeightBehavior(
         applyHeightToFirstAscent: false,
         applyHeightToLastDescent: false,
       ),
-    )..layout();
+    )..layout(minWidth: 0, maxWidth: double.infinity);
   }
 
   /// Columns/rows that fit after [explicit] padding; remainder is balanced
   /// (Ghostty `Padding.balanced` + top-cap).
   ({int cols, int rows, EdgeInsets padding}) fit(
     Size size, {
-    // Ghostty default window-padding is small (often 2).
     EdgeInsets explicit = const EdgeInsets.fromLTRB(2, 2, 2, 2),
     int minCols = 40,
     int minRows = 12,

@@ -1,3 +1,5 @@
+import 'dart:math' as math;
+
 import 'package:flutter/material.dart';
 
 import 'frame.dart';
@@ -49,7 +51,22 @@ class VtPainter extends CustomPainter {
 
     if (frame.cols <= 0 || frame.rows <= 0) return;
 
-    final cellW = metrics.cellWidth;
+    // Lock cell pitch to the live face advance used for paint. Metrics can
+    // briefly disagree (font fallback not ready at first measure, weight
+    // change). Using a wider cellW than the glyph advance opens a hole
+    // between *every* character — the regression after per-cell paint.
+    final baseStyle = metrics.style.copyWith(
+      color: frame.foreground,
+      letterSpacing: 0,
+      wordSpacing: 0,
+      fontWeight: FontWeight.w400,
+    );
+    final liveAdvance = VtMetrics.advanceOf(baseStyle);
+    // Use the live advance as the grid pitch (not a rounded-up metrics value).
+    // Rounding cellW above the face advance is exactly what reopened letter holes.
+    final cellW = liveAdvance > 0.5
+        ? liveAdvance
+        : metrics.cellWidth;
     final cellH = metrics.cellHeight;
     final origin = Offset(padding.left, padding.top);
 
@@ -117,17 +134,9 @@ class VtPainter extends CustomPainter {
 
     // --- text + decorations ---
     //
-    // Paint **one cell at a time** at grid origin (x·cellW, y·cellH).
-    // Coalesced TextPainter runs use the face advance, which can differ from
-    // cellW (rounding, bold face, fallback fonts). At SGR style boundaries
-    // that produced a visible gap between e.g. bold "agentos" and the rest.
-    // Ghostty places each glyph by cell coordinate; we do the same.
-    final baseStyle = metrics.style.copyWith(
-      color: frame.foreground,
-      letterSpacing: 0,
-      wordSpacing: 0,
-    );
-
+    // One glyph cluster per cell at (pad + x·cellW, pad + y·cellH). cellW is
+    // the live mono advance (see above), so adjacent cells touch — no letter
+    // holes, and no SGR-boundary holes either.
     for (var y = 0; y < frame.rows; y++) {
       final cellTop = origin.dy + y * cellH;
       final baselineY = cellTop + metrics.topToBaseline;
@@ -157,28 +166,32 @@ class VtPainter extends CustomPainter {
         }
 
         final cellLeft = origin.dx + x * cellW;
+        final cellRect = Rect.fromLTWH(cellLeft, cellTop, cellW, cellH);
 
         if (!cell.invisible && cell.text.isNotEmpty) {
+          final style = _textStyle(baseStyle, cell, fg);
           final tp = TextPainter(
-            text: TextSpan(
-              text: cell.text,
-              style: _textStyle(baseStyle, cell, fg),
-            ),
+            text: TextSpan(text: cell.text, style: style),
             textDirection: TextDirection.ltr,
             maxLines: 1,
             textHeightBehavior: const TextHeightBehavior(
               applyHeightToFirstAscent: false,
               applyHeightToLastDescent: false,
             ),
-          )..layout(maxWidth: cellW);
+          )..layout(minWidth: 0, maxWidth: double.infinity);
 
           final measuredBaseline = tp.computeDistanceToActualBaseline(
             TextBaseline.alphabetic,
           );
+          // Left-align in the cell (Ghostty grid_pos); clip so a slightly
+          // heavy bold glyph cannot bleed into the neighbour.
+          canvas.save();
+          canvas.clipRect(cellRect);
           tp.paint(
             canvas,
             Offset(cellLeft, baselineY - measuredBaseline),
           );
+          canvas.restore();
         }
 
         if (hasDeco) {
