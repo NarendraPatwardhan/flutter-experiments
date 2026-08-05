@@ -36,17 +36,19 @@ Flutter UI
 
 **Do not** load the Rustler NIF from Dart. **Do not** reimplement the env bridge.
 
-## First-cut C ABI
+## C ABI (expanded)
 
-| C | Role |
-|---|------|
-| `aos_vm_boot` | Boot from kernel + optional base image tar (loom); tick to prompt |
-| `aos_vm_tick` | One fuel quantum; state runnable/waiting/exited |
-| `aos_vm_send_input` | Terminal input bytes |
-| `aos_vm_take_output` | Drain capture buffer |
-| `aos_vm_exec` | Structured shell command (`KernelHost::exec`) |
-| `aos_vm_close` | Drop host |
-| `aos_last_error` | Last error string |
+Full surface and phased design: **[aos-c-api.md](aos-c-api.md)**. Header: `native/agentos_flutter_host/include/agentos_flutter_host.h`.
+
+| Area | Examples |
+|------|----------|
+| Compat core | `aos_vm_boot`, `tick`, `send_input`, `take_output`, `exec`, `close` |
+| Session | `boot_ex`, `restore`, `tick_n`, `take_output_ex`, `status` |
+| Jobs | `run`, `exec_ex`, `exec_start` / `poll` / `peek` / `cancel`, `autocomplete` |
+| Control | `svc_call`, FS (`read_file` … `mount`) |
+| Identity | `snapshot`, `snapshot_incremental`, `commit_layer` |
+| Relay | `relay_next` (+ sidecar) + respond family |
+| Other | `inject_catalog` (blob schema TBD), perf_* |
 
 Ship tree: `//:linux_product_bundle` → `linux_product.tar.gz` with `lib/libagentos_flutter_host.so` and `data/kernel.wasm` next to the Flutter binary.
 

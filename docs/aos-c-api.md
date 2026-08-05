@@ -435,7 +435,21 @@ When expanded and “good enough” for product:
 
 ---
 
-## 9. Bottom line
+## 9. Implementation status (alpha)
+
+| Phase | Surface | Status |
+|-------|---------|--------|
+| T0 | boot / tick / send / take / exec / close | **Done** (compat) |
+| T1 | boot_ex, restore, take_output_ex, status, tick_n | **Done** |
+| T2 | run, exec opts, jobs, autocomplete | **Done** |
+| T3–T4 | relay queues + respond (HTTP/host_call/persist/WS) | **Done** (JSON+payload frames; REAL net not wired) |
+| T5 | snapshot*, commit_layer | **Done** |
+| T6 | FS, svc_call; catalog inject | FS/svc **Done**; catalog **stub** (blob schema TBD) |
+| T7 | perf_* | **Done** |
+
+Dart: `lib/agent_os/bindings.dart` + `vm.dart` bind the full header. Product UI still uses the T0 smoke path.
+
+## 10. Bottom line
 
 Ideal is **not** “copy every Elixir name into C once.”
 
