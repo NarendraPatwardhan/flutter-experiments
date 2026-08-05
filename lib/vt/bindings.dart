@@ -70,9 +70,13 @@ const int kTerminalOptColorForeground = 11;
 const int kTerminalOptColorBackground = 12;
 const int kTerminalOptColorCursor = 13;
 const int kTerminalOptColorPalette = 14;
+const int kTerminalOptKittyImageStorageLimit = 15;
 const int kTerminalOptSelection = 21;
 const int kTerminalOptPwdChanged = 25;
 const int kTerminalOptClipboardWrite = 26;
+const int kTerminalOptDesktopNotification = 29;
+const int kTerminalOptProgressReport = 30;
+const int kTerminalOptContinuationMaxBytes = 31;
 
 const int kTerminalDataCols = 1;
 const int kTerminalDataRows = 2;
@@ -82,6 +86,57 @@ const int kTerminalDataPwd = 13;
 const int kTerminalDataTotalRows = 14;
 const int kTerminalDataScrollbackRows = 15;
 const int kTerminalDataMouseTracking = 11;
+const int kTerminalDataKittyGraphics = 30;
+
+// Kitty graphics storage / image / placement (kitty_graphics.h)
+const int kKittyGraphicsDataPlacementIterator = 1;
+const int kKittyGraphicsDataGeneration = 2;
+
+const int kKittyImageDataWidth = 3;
+const int kKittyImageDataHeight = 4;
+const int kKittyImageDataFormat = 5;
+const int kKittyImageDataDataPtr = 7;
+const int kKittyImageDataDataLen = 8;
+const int kKittyImageDataGeneration = 9;
+
+const int kKittyPlacementDataImageId = 1;
+const int kKittyPlacementDataPlacementId = 2;
+const int kKittyPlacementDataIsVirtual = 3;
+const int kKittyPlacementDataXOffset = 4;
+const int kKittyPlacementDataYOffset = 5;
+const int kKittyPlacementDataColumns = 10;
+const int kKittyPlacementDataRows = 11;
+const int kKittyPlacementDataZ = 12;
+
+const int kKittyImageFormatRgb = 0;
+const int kKittyImageFormatRgba = 1;
+const int kKittyImageFormatPng = 2;
+const int kKittyImageFormatGrayAlpha = 3;
+const int kKittyImageFormatGray = 4;
+
+// System interface (sys.h)
+const int kSysOptUserdata = 0;
+const int kSysOptDecodePng = 1;
+const int kSysOptLog = 2;
+
+// Scrollback compression (terminal.h)
+const int kCompressModeIncremental = 0;
+const int kCompressModeFull = 1;
+const int kCompressionModeIncremental = 0; // alias
+const int kCompressionModeFull = 1; // alias
+const int kCompressResultUnsupported = 0;
+const int kCompressResultPending = 1;
+const int kCompressResultComplete = 2;
+const int kCompressionResultUnsupported = 0;
+const int kCompressionResultPending = 1;
+const int kCompressionResultComplete = 2;
+
+// Progress (OSC 9;4)
+const int kProgressStateRemove = 0;
+const int kProgressStateSet = 1;
+const int kProgressStateError = 2;
+const int kProgressStateIndeterminate = 3;
+const int kProgressStatePause = 4;
 
 // Style color tags
 const int kStyleColorNone = 0;
@@ -324,6 +379,126 @@ final class GhosttyMousePositionNative extends Struct {
   external double y;
 }
 
+/// GhosttySysImage — decoded RGBA image returned from sys PNG callback.
+final class GhosttySysImage extends Struct {
+  @Uint32()
+  external int width;
+  @Uint32()
+  external int height;
+  external Pointer<Uint8> data;
+  @Size()
+  external int dataLen;
+}
+
+/// Alias used by some call sites.
+typedef GhosttySysImageNative = GhosttySysImage;
+
+/// GhosttyAllocator — opaque enough for pass-through (ctx + vtable).
+final class GhosttyAllocator extends Struct {
+  external Pointer<Void> ctx;
+  external Pointer<Void> vtable;
+}
+
+/// Alias used by some call sites.
+typedef GhosttyAllocatorNative = GhosttyAllocator;
+
+/// GhosttyTerminalProgressReport (sized struct).
+final class GhosttyProgressReportNative extends Struct {
+  @Size()
+  external int size;
+  @Int32()
+  external int state;
+  @Int8()
+  external int progress;
+}
+
+/// GhosttyTerminalDesktopNotification (sized struct).
+final class GhosttyDesktopNotificationNative extends Struct {
+  @Size()
+  external int size;
+  external GhosttyString title;
+  external GhosttyString body;
+}
+
+/// GhosttyKittyGraphicsPlacementRenderInfo — sized render geometry helper.
+final class GhosttyKittyPlacementRenderInfoNative extends Struct {
+  @Size()
+  external int size;
+  @Uint32()
+  external int pixelWidth;
+  @Uint32()
+  external int pixelHeight;
+  @Uint32()
+  external int gridCols;
+  @Uint32()
+  external int gridRows;
+  @Int32()
+  external int viewportCol;
+  @Int32()
+  external int viewportRow;
+  @Bool()
+  external bool viewportVisible;
+  @Uint32()
+  external int sourceX;
+  @Uint32()
+  external int sourceY;
+  @Uint32()
+  external int sourceWidth;
+  @Uint32()
+  external int sourceHeight;
+}
+
+/// GhosttyFormatterScreenExtra (sized).
+final class GhosttyFormatterScreenExtraNative extends Struct {
+  @Size()
+  external int size;
+  @Bool()
+  external bool cursor;
+  @Bool()
+  external bool style;
+  @Bool()
+  external bool hyperlink;
+  @Bool()
+  external bool protection;
+  @Bool()
+  external bool kittyKeyboard;
+  @Bool()
+  external bool charsets;
+}
+
+/// GhosttyFormatterTerminalExtra (sized).
+final class GhosttyFormatterTerminalExtraNative extends Struct {
+  @Size()
+  external int size;
+  @Bool()
+  external bool palette;
+  @Bool()
+  external bool modes;
+  @Bool()
+  external bool scrollingRegion;
+  @Bool()
+  external bool tabstops;
+  @Bool()
+  external bool pwd;
+  @Bool()
+  external bool keyboard;
+  external GhosttyFormatterScreenExtraNative screen;
+}
+
+/// GhosttyFormatterTerminalOptions (sized, by-value for formatter_terminal_new).
+final class GhosttyFormatterTerminalOptionsNative extends Struct {
+  @Size()
+  external int size;
+  @Int32()
+  external int emit;
+  @Bool()
+  external bool unwrap;
+  @Bool()
+  external bool trim;
+  external GhosttyFormatterTerminalExtraNative extra;
+  external Pointer<GhosttySelectionNative> selection;
+}
+
 
 // --- Function typedefs ------------------------------------------------------
 
@@ -444,7 +619,160 @@ typedef WritePtyNative = Void Function(
 typedef BellNative = Void Function(Pointer<Void> term, Pointer<Void> userdata);
 typedef TitleChangedNative = Void Function(Pointer<Void> term, Pointer<Void> userdata);
 typedef PwdChangedNative = Void Function(Pointer<Void> term, Pointer<Void> userdata);
-// Clipboard is complex; bind later if needed — stub as Void for now via raw pointer set.
+typedef ProgressReportNative = Void Function(
+  Pointer<Void> term,
+  Pointer<Void> userdata,
+  Pointer<GhosttyProgressReportNative> report,
+);
+typedef DesktopNotificationNative = Void Function(
+  Pointer<Void> term,
+  Pointer<Void> userdata,
+  Pointer<GhosttyDesktopNotificationNative> notification,
+);
+
+// Sys PNG decode callback (sys.h)
+typedef DecodePngNative = Bool Function(
+  Pointer<Void> userdata,
+  Pointer<GhosttyAllocator> allocator,
+  Pointer<Uint8> data,
+  Size dataLen,
+  Pointer<GhosttySysImage> out,
+);
+
+// Allocator helpers
+typedef _GhosttyAlloc = Pointer<Uint8> Function(
+    Pointer<GhosttyAllocator> allocator, Size len);
+typedef _GhosttyAllocDart = Pointer<Uint8> Function(
+    Pointer<GhosttyAllocator> allocator, int len);
+typedef _GhosttyFree = Void Function(
+    Pointer<GhosttyAllocator> allocator, Pointer<Uint8> ptr, Size len);
+typedef _GhosttyFreeDart = void Function(
+    Pointer<GhosttyAllocator> allocator, Pointer<Uint8> ptr, int len);
+
+typedef _SysSet = Int32 Function(Int32 option, Pointer<Void> value);
+typedef _SysSetDart = int Function(int option, Pointer<Void> value);
+
+typedef _CompressActivity = Int32 Function(
+    Pointer<Void> term, Pointer<Uint64> out);
+typedef _CompressActivityDart = int Function(
+    Pointer<Void> term, Pointer<Uint64> out);
+typedef _Compress = Int32 Function(
+    Pointer<Void> term, Int32 mode, Pointer<Int32> out);
+typedef _CompressDart = int Function(
+    Pointer<Void> term, int mode, Pointer<Int32> out);
+
+// Kitty graphics
+typedef _KittyGraphicsGet = Int32 Function(
+    Pointer<Void> graphics, Int32 data, Pointer<Void> out);
+typedef _KittyGraphicsGetDart = int Function(
+    Pointer<Void> graphics, int data, Pointer<Void> out);
+typedef _KittyImageLookup = Pointer<Void> Function(
+    Pointer<Void> graphics, Uint32 imageId);
+typedef _KittyImageLookupDart = Pointer<Void> Function(
+    Pointer<Void> graphics, int imageId);
+typedef _KittyImageGet = Int32 Function(
+    Pointer<Void> image, Int32 data, Pointer<Void> out);
+typedef _KittyImageGetDart = int Function(
+    Pointer<Void> image, int data, Pointer<Void> out);
+typedef _KittyPlacementIterNew = Int32 Function(
+    Pointer<GhosttyAllocator> alloc, Pointer<Pointer<Void>> out);
+typedef _KittyPlacementIterNewDart = int Function(
+    Pointer<GhosttyAllocator> alloc, Pointer<Pointer<Void>> out);
+typedef _KittyPlacementIterSet = Int32 Function(
+    Pointer<Void> iter, Int32 option, Pointer<Void> value);
+typedef _KittyPlacementIterSetDart = int Function(
+    Pointer<Void> iter, int option, Pointer<Void> value);
+typedef _KittyPlacementGet = Int32 Function(
+    Pointer<Void> iter, Int32 data, Pointer<Void> out);
+typedef _KittyPlacementGetDart = int Function(
+    Pointer<Void> iter, int data, Pointer<Void> out);
+typedef _KittyPlacementPixelSize = Int32 Function(
+    Pointer<Void> iter,
+    Pointer<Void> image,
+    Pointer<Void> terminal,
+    Pointer<Uint32> outW,
+    Pointer<Uint32> outH);
+typedef _KittyPlacementPixelSizeDart = int Function(
+    Pointer<Void> iter,
+    Pointer<Void> image,
+    Pointer<Void> terminal,
+    Pointer<Uint32> outW,
+    Pointer<Uint32> outH);
+typedef _KittyPlacementGridSize = Int32 Function(
+    Pointer<Void> iter,
+    Pointer<Void> image,
+    Pointer<Void> terminal,
+    Pointer<Uint32> outCols,
+    Pointer<Uint32> outRows);
+typedef _KittyPlacementGridSizeDart = int Function(
+    Pointer<Void> iter,
+    Pointer<Void> image,
+    Pointer<Void> terminal,
+    Pointer<Uint32> outCols,
+    Pointer<Uint32> outRows);
+typedef _KittyPlacementViewportPos = Int32 Function(
+    Pointer<Void> iter,
+    Pointer<Void> image,
+    Pointer<Void> terminal,
+    Pointer<Int32> outCol,
+    Pointer<Int32> outRow);
+typedef _KittyPlacementViewportPosDart = int Function(
+    Pointer<Void> iter,
+    Pointer<Void> image,
+    Pointer<Void> terminal,
+    Pointer<Int32> outCol,
+    Pointer<Int32> outRow);
+typedef _KittyPlacementRenderInfo = Int32 Function(
+    Pointer<Void> iter,
+    Pointer<Void> image,
+    Pointer<Void> terminal,
+    Pointer<GhosttyKittyPlacementRenderInfoNative> out);
+typedef _KittyPlacementRenderInfoDart = int Function(
+    Pointer<Void> iter,
+    Pointer<Void> image,
+    Pointer<Void> terminal,
+    Pointer<GhosttyKittyPlacementRenderInfoNative> out);
+
+typedef _SnapshotEncodeBuf = Int32 Function(
+    Pointer<Void> term, Pointer<Uint8> buf, Size cap, Pointer<Size> out);
+typedef _SnapshotEncodeBufDart = int Function(
+    Pointer<Void> term, Pointer<Uint8> buf, int cap, Pointer<Size> out);
+typedef _SnapshotEncodeAlloc = Int32 Function(
+    Pointer<Void> term,
+    Pointer<GhosttyAllocator> alloc,
+    Pointer<Pointer<Uint8>> outPtr,
+    Pointer<Size> outLen);
+typedef _SnapshotEncodeAllocDart = int Function(
+    Pointer<Void> term,
+    Pointer<GhosttyAllocator> alloc,
+    Pointer<Pointer<Uint8>> outPtr,
+    Pointer<Size> outLen);
+
+// formatter_terminal_new takes options by value (MEMORY-class on SysV).
+typedef _FormatterTerminalNew = Int32 Function(
+    Pointer<GhosttyAllocator> alloc,
+    Pointer<Pointer<Void>> out,
+    Pointer<Void> terminal,
+    GhosttyFormatterTerminalOptionsNative options);
+typedef _FormatterTerminalNewDart = int Function(
+    Pointer<GhosttyAllocator> alloc,
+    Pointer<Pointer<Void>> out,
+    Pointer<Void> terminal,
+    GhosttyFormatterTerminalOptionsNative options);
+typedef _FormatterFormatBuf = Int32 Function(
+    Pointer<Void> formatter, Pointer<Uint8> buf, Size cap, Pointer<Size> out);
+typedef _FormatterFormatBufDart = int Function(
+    Pointer<Void> formatter, Pointer<Uint8> buf, int cap, Pointer<Size> out);
+typedef _FormatterFormatAlloc = Int32 Function(
+    Pointer<Void> formatter,
+    Pointer<GhosttyAllocator> alloc,
+    Pointer<Pointer<Uint8>> outPtr,
+    Pointer<Size> outLen);
+typedef _FormatterFormatAllocDart = int Function(
+    Pointer<Void> formatter,
+    Pointer<GhosttyAllocator> alloc,
+    Pointer<Pointer<Uint8>> outPtr,
+    Pointer<Size> outLen);
 
 /// Low-level bindings to `libghostty-vt`.
 class GhosttyVtNative {
@@ -577,7 +905,59 @@ class GhosttyVtNative {
                 'ghostty_selection_gesture_event'),
         selectionFormatBuf = _lib
             .lookupFunction<_SelectionFormatBuf, _SelectionFormatBufDart>(
-                'ghostty_terminal_selection_format_buf');
+                'ghostty_terminal_selection_format_buf'),
+        ghosttyAlloc =
+            _lib.lookupFunction<_GhosttyAlloc, _GhosttyAllocDart>('ghostty_alloc'),
+        ghosttyFree =
+            _lib.lookupFunction<_GhosttyFree, _GhosttyFreeDart>('ghostty_free'),
+        sysSet = _lib.lookupFunction<_SysSet, _SysSetDart>('ghostty_sys_set'),
+        terminalCompress =
+            _lib.lookupFunction<_Compress, _CompressDart>('ghostty_terminal_compress'),
+        terminalCompressionActivity = _lib.lookupFunction<_CompressActivity,
+            _CompressActivityDart>('ghostty_terminal_compression_activity'),
+        kittyGraphicsGet = _lib.lookupFunction<_KittyGraphicsGet,
+            _KittyGraphicsGetDart>('ghostty_kitty_graphics_get'),
+        kittyGraphicsImage = _lib.lookupFunction<_KittyImageLookup,
+            _KittyImageLookupDart>('ghostty_kitty_graphics_image'),
+        kittyGraphicsImageGet = _lib.lookupFunction<_KittyImageGet,
+            _KittyImageGetDart>('ghostty_kitty_graphics_image_get'),
+        kittyPlacementIteratorNew = _lib.lookupFunction<_KittyPlacementIterNew,
+                _KittyPlacementIterNewDart>(
+            'ghostty_kitty_graphics_placement_iterator_new'),
+        kittyPlacementIteratorFree =
+            _lib.lookupFunction<_Void_Ptr, _Void_PtrDart>(
+                'ghostty_kitty_graphics_placement_iterator_free'),
+        kittyPlacementIteratorSet = _lib.lookupFunction<_KittyPlacementIterSet,
+                _KittyPlacementIterSetDart>(
+            'ghostty_kitty_graphics_placement_iterator_set'),
+        kittyPlacementNext = _lib.lookupFunction<_Bool_Ptr, _Bool_PtrDart>(
+            'ghostty_kitty_graphics_placement_next'),
+        kittyPlacementGet = _lib.lookupFunction<_KittyPlacementGet,
+            _KittyPlacementGetDart>('ghostty_kitty_graphics_placement_get'),
+        kittyPlacementPixelSize = _lib.lookupFunction<_KittyPlacementPixelSize,
+                _KittyPlacementPixelSizeDart>(
+            'ghostty_kitty_graphics_placement_pixel_size'),
+        kittyPlacementGridSize = _lib.lookupFunction<_KittyPlacementGridSize,
+                _KittyPlacementGridSizeDart>(
+            'ghostty_kitty_graphics_placement_grid_size'),
+        kittyPlacementViewportPos = _lib.lookupFunction<_KittyPlacementViewportPos,
+                _KittyPlacementViewportPosDart>(
+            'ghostty_kitty_graphics_placement_viewport_pos'),
+        kittyPlacementRenderInfo = _lib.lookupFunction<_KittyPlacementRenderInfo,
+                _KittyPlacementRenderInfoDart>(
+            'ghostty_kitty_graphics_placement_render_info'),
+        snapshotEncodeBuf = _lib.lookupFunction<_SnapshotEncodeBuf,
+            _SnapshotEncodeBufDart>('ghostty_snapshot_encode_buf'),
+        snapshotEncodeAlloc = _lib.lookupFunction<_SnapshotEncodeAlloc,
+            _SnapshotEncodeAllocDart>('ghostty_snapshot_encode_alloc'),
+        formatterTerminalNew = _lib.lookupFunction<_FormatterTerminalNew,
+            _FormatterTerminalNewDart>('ghostty_formatter_terminal_new'),
+        formatterFormatBuf = _lib.lookupFunction<_FormatterFormatBuf,
+            _FormatterFormatBufDart>('ghostty_formatter_format_buf'),
+        formatterFormatAlloc = _lib.lookupFunction<_FormatterFormatAlloc,
+            _FormatterFormatAllocDart>('ghostty_formatter_format_alloc'),
+        formatterFree = _lib.lookupFunction<_Void_Ptr, _Void_PtrDart>(
+            'ghostty_formatter_free');
 
   final DynamicLibrary _lib;
 
@@ -635,6 +1015,35 @@ class GhosttyVtNative {
   final _TermSetDart selectionGestureEventSet;
   final _SelGestureEventDart selectionGestureEvent;
   final _SelectionFormatBufDart selectionFormatBuf;
+
+  // Allocator / sys / compression
+  final _GhosttyAllocDart ghosttyAlloc;
+  final _GhosttyFreeDart ghosttyFree;
+  final _SysSetDart sysSet;
+  final _CompressDart terminalCompress;
+  final _CompressActivityDart terminalCompressionActivity;
+
+  // Kitty graphics
+  final _KittyGraphicsGetDart kittyGraphicsGet;
+  final _KittyImageLookupDart kittyGraphicsImage;
+  final _KittyImageGetDart kittyGraphicsImageGet;
+  final _KittyPlacementIterNewDart kittyPlacementIteratorNew;
+  final _Void_PtrDart kittyPlacementIteratorFree;
+  final _KittyPlacementIterSetDart kittyPlacementIteratorSet;
+  final _Bool_PtrDart kittyPlacementNext;
+  final _KittyPlacementGetDart kittyPlacementGet;
+  final _KittyPlacementPixelSizeDart kittyPlacementPixelSize;
+  final _KittyPlacementGridSizeDart kittyPlacementGridSize;
+  final _KittyPlacementViewportPosDart kittyPlacementViewportPos;
+  final _KittyPlacementRenderInfoDart kittyPlacementRenderInfo;
+
+  // Snapshot / formatter
+  final _SnapshotEncodeBufDart snapshotEncodeBuf;
+  final _SnapshotEncodeAllocDart snapshotEncodeAlloc;
+  final _FormatterTerminalNewDart formatterTerminalNew;
+  final _FormatterFormatBufDart formatterFormatBuf;
+  final _FormatterFormatAllocDart formatterFormatAlloc;
+  final _Void_PtrDart formatterFree;
 
   static GhosttyVtNative open([String? path]) {
     final p = path ?? _defaultLibPath();

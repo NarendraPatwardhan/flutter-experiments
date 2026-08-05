@@ -1,4 +1,4 @@
-// Render-state → VtFrame projection (Ghostty VT embed G1).
+// Render-state → VtFrame projection (Ghostty VT embed G1 + G4 partial dirty).
 // libghostty-vt owns terminal truth; this file only snapshots for Flutter paint.
 
 import 'dart:convert';
@@ -20,6 +20,13 @@ const Color kVtRenderDefaultFg = VtTheme.foreground;
 /// selection), applies inverse at projection (swap fg/bg), then clears
 /// per-row + global dirty flags.
 ///
+/// Dirty policy (G4):
+/// - [VtDirtyKind.clean] + [previous]: return [previous] without re-walking cells
+///   (still refreshes cursor/colors and clears global dirty).
+/// - [VtDirtyKind.partial] + [previous] same size: merge dirty rows into a copy
+///   of [previous.cells] and set [VtFrame.dirtyRows].
+/// - otherwise: full rebuild; [VtFrame.dirtyRows] is null.
+///
 /// [onHandles] is invoked when get APIs rewrite [rowIter] / [cells] so the
 /// session owner can keep its fields in sync.
 VtFrame projectRenderState({
@@ -29,6 +36,7 @@ VtFrame projectRenderState({
   required Pointer rowIter,
   required Pointer cells,
   void Function(Pointer rowIter, Pointer cells)? onHandles,
+  VtFrame? previous,
 }) {
   final term = terminal.cast<Void>();
   final state = renderState.cast<Void>();
@@ -92,7 +100,7 @@ VtFrame projectRenderState({
       }
     }
 
-    // Dirty kind (snapshot before clear).
+    // Dirty kind first (snapshot before clear).
     i32Ptr.value = kRenderDirtyFull;
     native.renderStateGet(state, kRenderDataDirty, i32Ptr.cast());
     final dirty = switch (i32Ptr.value) {
@@ -143,6 +151,30 @@ VtFrame projectRenderState({
       };
     }
 
+    final prev = previous;
+    final sameSize = prev != null && prev.cols == c && prev.rows == r;
+
+    // Clean: reuse previous cells without re-walking (still refresh meta).
+    if (dirty == VtDirtyKind.clean && sameSize && prev != null) {
+      i32Ptr.value = kRenderDirtyFalse;
+      native.renderStateSet(state, kRenderOptionDirty, i32Ptr.cast());
+      return prev.copyWithMeta(
+        background: bg,
+        foreground: fg,
+        cursorColor: cursorColor,
+        clearCursorColor: cursorColor == null,
+        cursorX: cx,
+        cursorY: cy,
+        clearCursorPos: true,
+        cursorVisible: cursorVisible && cursorInViewport,
+        cursorStyle: cursorStyle,
+        cursorBlink: cursorBlink,
+        cursorOnWideTail: cursorOnWideTail,
+        dirty: VtDirtyKind.clean,
+        dirtyRows: const <int>{},
+      );
+    }
+
     // Seed row iterator from render state (resets to before first row).
     rowIterSlot.value = liveRowIter;
     _check(native.renderStateGet(
@@ -153,41 +185,59 @@ VtFrame projectRenderState({
     liveRowIter = rowIterSlot.value;
     onHandles?.call(liveRowIter, liveCells);
 
-    final outCells = List<VtCell>.filled(c * r, const VtCell());
+    final partial = dirty == VtDirtyKind.partial && sameSize && prev != null;
+    final List<VtCell> outCells;
+    final Set<int>? dirtyRowsOut;
+    if (partial && prev != null) {
+      outCells = List<VtCell>.from(prev.cells);
+      dirtyRowsOut = <int>{};
+    } else {
+      outCells = List<VtCell>.filled(c * r, const VtCell());
+      dirtyRowsOut = null;
+    }
+
     var y = 0;
     while (native.rowIteratorNext(liveRowIter) && y < r) {
-      cellsSlot.value = liveCells;
-      final cellRc = native.rowGet(
-        liveRowIter,
-        kRowDataCells,
-        cellsSlot.cast(),
-      );
-      if (cellRc != kGhosttySuccess) {
-        y++;
-        continue;
+      var rowDirty = true;
+      if (partial) {
+        boolPtr.value = 1;
+        native.rowGet(liveRowIter, kRowDataDirty, boolPtr.cast());
+        rowDirty = boolPtr.value != 0;
       }
-      liveCells = cellsSlot.value;
-      onHandles?.call(liveRowIter, liveCells);
 
-      var x = 0;
-      while (native.rowCellsNext(liveCells) && x < c) {
-        outCells[y * c + x] = _readCell(
-          native: native,
-          cells: liveCells,
-          bgPtr: bgPtr,
-          fgPtr: fgPtr,
-          u32Ptr: u32Ptr,
-          boolPtr: boolPtr,
-          utf8Scratch: utf8Scratch,
-          bufferPtr: bufferPtr,
-          codepoints: codepoints,
-          stylePtr: stylePtr,
+      if (rowDirty) {
+        cellsSlot.value = liveCells;
+        final cellRc = native.rowGet(
+          liveRowIter,
+          kRowDataCells,
+          cellsSlot.cast(),
         );
-        x++;
-      }
-      while (x < c) {
-        outCells[y * c + x] = const VtCell();
-        x++;
+        if (cellRc == kGhosttySuccess) {
+          liveCells = cellsSlot.value;
+          onHandles?.call(liveRowIter, liveCells);
+
+          var x = 0;
+          while (native.rowCellsNext(liveCells) && x < c) {
+            outCells[y * c + x] = _readCell(
+              native: native,
+              cells: liveCells,
+              bgPtr: bgPtr,
+              fgPtr: fgPtr,
+              u32Ptr: u32Ptr,
+              boolPtr: boolPtr,
+              utf8Scratch: utf8Scratch,
+              bufferPtr: bufferPtr,
+              codepoints: codepoints,
+              stylePtr: stylePtr,
+            );
+            x++;
+          }
+          while (x < c) {
+            outCells[y * c + x] = const VtCell();
+            x++;
+          }
+        }
+        dirtyRowsOut?.add(y);
       }
 
       // Clear row dirty.
@@ -214,6 +264,7 @@ VtFrame projectRenderState({
       cursorBlink: cursorBlink,
       cursorOnWideTail: cursorOnWideTail,
       dirty: dirty,
+      dirtyRows: dirtyRowsOut,
     );
   } finally {
     freePtr(colsPtr);

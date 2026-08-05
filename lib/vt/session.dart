@@ -194,8 +194,8 @@ class GhosttyVtSession {
 
   /// Snapshot viewport cells + cursor into a pure-Dart [VtFrame].
   ///
-  /// Delegates to [projectRenderState] (G1: full style, selection, cursor attrs).
-  VtFrame snapshot() {
+  /// Delegates to [projectRenderState] (G1 style + G4 partial dirty).
+  VtFrame snapshot({VtFrame? previous}) {
     _ensureOpen();
     final frame = projectRenderState(
       native: _native,
@@ -203,6 +203,7 @@ class GhosttyVtSession {
       renderState: _renderState,
       rowIter: _rowIter,
       cells: _cells,
+      previous: previous,
       onHandles: (rowIter, cells) {
         _rowIter = rowIter.cast<Void>();
         _cells = cells.cast<Void>();

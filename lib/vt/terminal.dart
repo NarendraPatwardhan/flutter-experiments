@@ -1,4 +1,4 @@
-// Ghostty terminal ownership + effect queues (G2 stream plane).
+// Ghostty terminal ownership + effect queues (G2 stream plane + G4 chrome).
 
 import 'dart:convert';
 import 'dart:ffi';
@@ -8,11 +8,20 @@ import 'dart:ui' show Color;
 import '../agent_os/bindings.dart' show freePtr, mallocBytes;
 import 'bindings.dart';
 import 'frame.dart';
+import 'graphics.dart';
 import 'render.dart';
 import 'theme.dart';
 
+export 'graphics.dart'
+    show
+        VtImageLayer,
+        VtPaintImage,
+        collectImageLayers,
+        snapshotKittyGraphics,
+        installPngDecoderOnce;
+
 /// Owns a [GhosttyTerminal] + optional render iterators, and queues effects
-/// fired during [write] (WRITE_PTY, bell, title, pwd).
+/// fired during [write] (WRITE_PTY, bell, title, pwd, progress, notifications).
 ///
 /// Not thread-safe — call from one isolate. Effect callbacks enqueue only;
 /// drain with [takePtyOutput] / [takeChromeEvents] after each write batch.
@@ -48,6 +57,8 @@ class VtTerminal {
   NativeCallable<BellNative>? _bellCall;
   NativeCallable<TitleChangedNative>? _titleCall;
   NativeCallable<PwdChangedNative>? _pwdCall;
+  NativeCallable<ProgressReportNative>? _progressCall;
+  NativeCallable<DesktopNotificationNative>? _notifyCall;
 
   /// Opaque Ghostty terminal handle for encoder / render APIs.
   Pointer<Void> get handle => _terminal;
@@ -62,8 +73,8 @@ class VtTerminal {
 
   /// Open libghostty-vt and create a terminal of [cols]×[rows].
   ///
-  /// Installs default theme colors and effect callbacks (WRITE_PTY, BELL,
-  /// TITLE_CHANGED, PWD_CHANGED).
+  /// Installs default theme colors, Kitty graphics storage, PNG decoder,
+  /// and effect callbacks.
   factory VtTerminal.open(int cols, int rows, [String? libPath]) {
     if (cols < 1 || rows < 1) {
       throw ArgumentError('cols and rows must be >= 1');
@@ -113,9 +124,17 @@ class VtTerminal {
         cols: cols,
         rows: rows,
       );
-      term.setDefaultTheme();
-      term.installEffects();
-      return term;
+      try {
+        // G4: process-global PNG decoder + per-terminal Kitty storage budget.
+        installPngDecoderOnce(native);
+        term.enableKittyGraphics();
+        term.setDefaultTheme();
+        term.installEffects();
+        return term;
+      } catch (_) {
+        term.close();
+        rethrow;
+      }
     } finally {
       freePtr(termOut);
       freePtr(rsOut);
@@ -169,7 +188,34 @@ class VtTerminal {
     }
   }
 
-  /// Register WRITE_PTY / BELL / TITLE_CHANGED / PWD_CHANGED via [NativeCallable].
+  /// Enable Kitty graphics storage (64 MiB default).
+  ///
+  /// Delegates to the top-level [enableKittyGraphics] helper in graphics.dart
+  /// (library-private import of the same name is the free function when
+  /// called without a receiver; here we reimplement to avoid shadowing).
+  void enableKittyGraphics({int limitBytes = 64 * 1024 * 1024}) {
+    _ensureOpen();
+    // Call free function via explicit import alias path:
+    // top-level takes (native, term, {storageLimit}).
+    final lim = mallocBytes<Uint64>(1, sizeOf<Uint64>());
+    try {
+      lim.value = limitBytes;
+      final rc = _native.terminalSet(
+        _terminal,
+        kTerminalOptKittyImageStorageLimit,
+        lim.cast(),
+      );
+      if (rc != kGhosttySuccess) {
+        throw StateError(
+          'ghostty_terminal_set(KITTY_IMAGE_STORAGE_LIMIT) failed: $rc',
+        );
+      }
+    } finally {
+      freePtr(lim);
+    }
+  }
+
+  /// Register WRITE_PTY / BELL / TITLE / PWD / PROGRESS / NOTIFY via [NativeCallable].
   ///
   /// Idempotent: clears prior callables first. Callbacks only enqueue; they
   /// never re-enter [write].
@@ -178,13 +224,16 @@ class VtTerminal {
     _clearEffectOpts();
     _closeCallables();
 
-    // Closures capture this instance's queues (isolateLocal keeps them alive).
     _writePtyCall = NativeCallable<WritePtyNative>.isolateLocal(_onWritePty);
     _bellCall = NativeCallable<BellNative>.isolateLocal(_onBell);
-    _titleCall = NativeCallable<TitleChangedNative>.isolateLocal(_onTitleChanged);
+    _titleCall =
+        NativeCallable<TitleChangedNative>.isolateLocal(_onTitleChanged);
     _pwdCall = NativeCallable<PwdChangedNative>.isolateLocal(_onPwdChanged);
+    _progressCall =
+        NativeCallable<ProgressReportNative>.isolateLocal(_onProgress);
+    _notifyCall =
+        NativeCallable<DesktopNotificationNative>.isolateLocal(_onNotification);
 
-    // Userdata unused — queues are captured by the Dart closures.
     _native.terminalSet(_terminal, kTerminalOptUserdata, nullptr);
     _native.terminalSet(
       _terminal,
@@ -206,6 +255,16 @@ class VtTerminal {
       kTerminalOptPwdChanged,
       _pwdCall!.nativeFunction.cast(),
     );
+    _native.terminalSet(
+      _terminal,
+      kTerminalOptProgressReport,
+      _progressCall!.nativeFunction.cast(),
+    );
+    _native.terminalSet(
+      _terminal,
+      kTerminalOptDesktopNotification,
+      _notifyCall!.nativeFunction.cast(),
+    );
   }
 
   void _onWritePty(
@@ -215,7 +274,6 @@ class VtTerminal {
     int len,
   ) {
     if (len <= 0 || data == nullptr) return;
-    // Copy: Ghostty data is only valid for the callback duration.
     _ptyOut.add(Uint8List.fromList(data.asTypedList(len)));
   }
 
@@ -231,6 +289,41 @@ class VtTerminal {
     _chrome.add(const VtChromePwdChanged());
   }
 
+  void _onProgress(
+    Pointer<Void> term,
+    Pointer<Void> userdata,
+    Pointer<GhosttyProgressReportNative> report,
+  ) {
+    if (report == nullptr) return;
+    final r = report.ref;
+    final state = switch (r.state) {
+      kProgressStateRemove => VtProgressState.remove,
+      kProgressStateSet => VtProgressState.set,
+      kProgressStateError => VtProgressState.error,
+      kProgressStateIndeterminate => VtProgressState.indeterminate,
+      kProgressStatePause => VtProgressState.pause,
+      _ => VtProgressState.remove,
+    };
+    _chrome.add(VtChromeProgress(state: state, progress: r.progress));
+  }
+
+  void _onNotification(
+    Pointer<Void> term,
+    Pointer<Void> userdata,
+    Pointer<GhosttyDesktopNotificationNative> notification,
+  ) {
+    if (notification == nullptr) return;
+    final n = notification.ref;
+    final title = _ghosttyString(n.title);
+    final body = _ghosttyString(n.body);
+    _chrome.add(VtChromeNotification(title: title, body: body));
+  }
+
+  static String _ghosttyString(GhosttyString s) {
+    if (s.len <= 0 || s.ptr == nullptr) return '';
+    return utf8.decode(s.ptr.asTypedList(s.len), allowMalformed: true);
+  }
+
   /// Drain queued WRITE_PTY response bytes (for AgentOS send_input).
   List<Uint8List> takePtyOutput() {
     if (_ptyOut.isEmpty) return const <Uint8List>[];
@@ -239,7 +332,7 @@ class VtTerminal {
     return out;
   }
 
-  /// Drain queued chrome effects (bell / title / pwd).
+  /// Drain queued chrome effects (bell / title / pwd / progress / notify).
   List<VtChromeEvent> takeChromeEvents() {
     if (_chrome.isEmpty) return const <VtChromeEvent>[];
     final out = List<VtChromeEvent>.from(_chrome);
@@ -356,8 +449,10 @@ class VtTerminal {
     }
   }
 
-  /// Project render state into an immutable [VtFrame] (styles, cursor, selection).
-  VtFrame snapshot() {
+  /// Project render state into an immutable [VtFrame].
+  ///
+  /// Pass [previous] for G4 partial dirty merge / clean short-circuit.
+  VtFrame snapshot({VtFrame? previous}) {
     _ensureOpen();
     final frame = projectRenderState(
       native: _native,
@@ -365,6 +460,7 @@ class VtTerminal {
       renderState: _renderState,
       rowIter: _rowIter,
       cells: _cells,
+      previous: previous,
       onHandles: (rowIter, cells) {
         _rowIter = rowIter.cast<Void>();
         _cells = cells.cast<Void>();
@@ -373,6 +469,15 @@ class VtTerminal {
     cols = frame.cols;
     rows = frame.rows;
     return frame;
+  }
+
+  /// Snapshot Kitty graphics placements as owned [VtImageLayer]s (RGBA).
+  ///
+  /// Empty when no images are placed, graphics are disabled, or payloads are
+  /// still pending. Does not mutate terminal state.
+  List<VtImageLayer> snapshotImages() {
+    _ensureOpen();
+    return snapshotKittyGraphics(_native, _terminal);
   }
 
   void close() {
@@ -406,6 +511,8 @@ class VtTerminal {
     _native.terminalSet(_terminal, kTerminalOptBell, nullptr);
     _native.terminalSet(_terminal, kTerminalOptTitleChanged, nullptr);
     _native.terminalSet(_terminal, kTerminalOptPwdChanged, nullptr);
+    _native.terminalSet(_terminal, kTerminalOptProgressReport, nullptr);
+    _native.terminalSet(_terminal, kTerminalOptDesktopNotification, nullptr);
     _native.terminalSet(_terminal, kTerminalOptUserdata, nullptr);
   }
 
@@ -418,6 +525,10 @@ class VtTerminal {
     _titleCall = null;
     _pwdCall?.close();
     _pwdCall = null;
+    _progressCall?.close();
+    _progressCall = null;
+    _notifyCall?.close();
+    _notifyCall = null;
   }
 
   void _ensureOpen() {

@@ -406,6 +406,8 @@ class _HomePageState extends State<HomePage> with SingleTickerProviderStateMixin
                           padding: _gridPadding,
                           focused: _focused,
                           blinkPhase: _blink.value >= 0.5,
+                          imagesBelow: _session.imagesBelow,
+                          imagesAbove: _session.imagesAbove,
                         );
                       },
                     ),

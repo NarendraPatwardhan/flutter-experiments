@@ -216,7 +216,7 @@ keep both hosts alive until app dispose
   - underline / strikethrough / overline decorations from metrics
   - cursor under or over glyphs per style (block under text; bar/underline after)
   - unfocused → hollow block
-  - later: kitty image layers
+  - kitty image layers (z < 0 below text, z ≥ 0 above; ui.Image cache)
 
 Metrics stay measured mono (JetBrains Mono / system mono): **cell advance = face advance**, height from face metrics — already the Ghostty direction. Do not invent a second layout system.
 
@@ -257,9 +257,9 @@ Ghostty users expect:
 
 These are not optional forever; they are what separates a log viewer from a terminal. They depend on planes A/B/C already being real (styles + input + effects first).
 
-### 5.8 Kitty graphics (third ring)
+### 5.8 Kitty graphics (third ring) — **Done**
 
-Image protocols need terminal opts (storage limits, media callbacks via `sys`), render-state/terminal data for placed images, and a Flutter layer that composites bitmaps in cell space. Defer until text path is Ghostty-grade; do not pretend text-only is “done” while claiming graphics readiness.
+Terminal storage limit + process-global PNG decoder (`sys`), placement walk → `VtImageLayer`, async `VtImageCache` → `ui.Image`, painter composites below/above text by z. Geometry from `ghostty_kitty_graphics_placement_render_info`.
 
 ---
 
@@ -286,15 +286,22 @@ Not sacred names — the **roles** matter:
 
 ```text
 lib/vt/
-  bindings.dart      // raw FFI; grow toward full lib-vt surface we need
-  terminal.dart      // GhosttyTerminal + effects registration + write/resize/get
-  encoder.dart       // key (and later mouse/focus/paste) encode helpers
-  render.dart        // render_state update → VtFrame projection
-  frame.dart         // immutable paint model (rich cells)
-  painter.dart       // CustomPainter only; no FFI
+  bindings.dart      // raw FFI; lib-vt surface for G1–G4
+  terminal.dart      // GhosttyTerminal + effects + write/resize/get
+  encoder.dart       // key / mouse / focus / paste encode helpers
+  render.dart        // render_state update → VtFrame (partial dirty)
+  frame.dart         // immutable paint model (rich cells + dirtyRows + chrome events)
+  painter.dart       // CustomPainter; cells + Kitty image layers
   metrics.dart       // font → cell geometry (Ghostty rules)
   theme.dart         // product defaults; optional palette presets
-  session.dart       // optional façade: terminal + render + encoder + chrome state
+  graphics.dart      // Kitty placement → VtImageLayer + sys PNG hook
+  png.dart           // sync 8-bit PNG → RGBA (sys decode callback)
+  image_cache.dart   // async ui.Image cache for sync paint
+  compress.dart      // idle scrollback compression scheduler
+  snapshot.dart      // snapshot_encode_buf grow helper
+  format.dart        // terminal formatter plain/vt/html
+  selection.dart / scroll.dart / mouse.dart  // G3 interaction
+  session.dart       // optional façade
 ```
 
 Today much of this is collapsed into `session.dart` + thin frame. That is fine until styles/effects force a split; then **split by plane**, not by “one more method on the god session.”
@@ -329,11 +336,9 @@ Mouse encode, selection gestures, copy, scrollback navigation, scrollbar chrome.
 
 At G3, daily-driver terminal habits work.
 
-### Phase G4 — Full embedder ambition
+### Phase G4 — Full embedder ambition — **Done**
 
-Kitty graphics, scrollback compression scheduling, snapshots/formatter for debug export, partial dirty paint for performance, polish (progress OSC, notifications policy).
-
-G4 is excellence, not the definition of “usable.”
+Kitty graphics (`graphics.dart` / `image_cache.dart` / painter z-layers), scrollback compression scheduling (`compress.dart`), snapshots/formatter (`snapshot.dart` / `format.dart`), partial dirty projection (`render.dart` + `VtFrame.dirtyRows`), polish (progress OSC + desktop notifications → status line).
 
 ---
 
@@ -360,7 +365,7 @@ If the two sketches conflict, fix the sketch or the code — not permanent syste
 - Implementing a second terminal emulator in pure Dart.
 - Pixel-identical output to Ghostty’s GPU shaders (different font stack and painter; **behavior and grammar** match, not hash-identical frames).
 - Freezing the lib-vt C API (upstream may break; pin and adapt).
-- Boiling the ocean to bind every symbol before G1 looks good — **bind by plane need**, but do not pretend unused APIs “aren’t needed later.”
+- Binding every last symbol with no product path — still prefer plane-driven bind, but **do not defer whole planes** once the vision calls for them.
 
 ---
 
@@ -375,11 +380,14 @@ If the two sketches conflict, fix the sketch or the code — not permanent syste
 | Key / focus / paste encoders | **Done** (G2: `encoder.dart`) |
 | Live dual-host session loop | **Done** (`lib/session/product_session.dart`, `main.dart`) |
 | Selection + scroll + mouse helpers | **Done** (G3 basic: `selection.dart`, `scroll.dart`, `mouse.dart`) |
-| Kitty graphics | **Deferred** (G4) |
-| Partial dirty paint / compression | **Deferred** (G4) |
+| Kitty graphics + image paint | **Done** (G4: `graphics.dart`, `image_cache.dart`, painter z-layers) |
+| Partial dirty projection | **Done** (G4: `render.dart` clean/partial/full + `VtFrame.dirtyRows`) |
+| Scrollback compression scheduler | **Done** (G4: `compress.dart` idle 300ms incremental) |
+| Snapshot / formatter export | **Done** (G4: `snapshot.dart`, `format.dart`) |
+| Progress OSC + desktop notifications | **Done** (G4: `VtChromeProgress` / `VtChromeNotification` → status) |
 | Docs for embed intent | **This sketch** |
 
-The library is not the bottleneck. The embedder carries G1–G3; G4 remains open.
+G1–G4 embedder planes are implemented. Further polish is product taste, not a missing plane.
 
 ---
 
@@ -395,6 +403,6 @@ Ideal is a **full Ghostty-shaped embed**:
 4. effects that close the loop with AgentOS as the pty peer,
 5. then scroll, selection, and graphics as the experience deepens.
 
-We currently have a **proof that the pipe fits**. The product needs the **closed loop and the full visual cell model**. Treat that as the terminal workstream; treat AgentOS session wiring as the partner workstream that feeds it bytes and consumes encoded input — not as a substitute for Ghostty depth.
+G1–G4 embedder work is in tree: closed loop, full cell style, interaction, Kitty graphics, partial dirty, compression, snapshot/format, progress/notifications. Treat further work as product polish on that spine, not as a missing plane.
 
 Update this file when the embed architecture diverges. Prefer rewriting `lib/vt` over piling flags onto the smoke path.

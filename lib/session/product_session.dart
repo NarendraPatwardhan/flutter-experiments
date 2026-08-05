@@ -8,9 +8,14 @@ import 'package:flutter/services.dart'
 
 import '../agent_os/vm.dart';
 import '../vt/bindings.dart';
+import '../vt/compress.dart';
 import '../vt/encoder.dart';
+import '../vt/format.dart';
 import '../vt/frame.dart';
+import '../vt/graphics.dart';
+import '../vt/image_cache.dart';
 import '../vt/selection.dart';
+import '../vt/snapshot.dart';
 import '../vt/terminal.dart';
 
 /// Dual-host live product session: AgentOS (guest) + Ghostty lib-vt (terminal).
@@ -50,6 +55,12 @@ class ProductSession extends ChangeNotifier {
   String _title = '';
   String _pwd = '';
 
+  final VtCompressScheduler _compress = VtCompressScheduler();
+  final VtImageCache _imageCache = VtImageCache();
+  List<VtImageLayer> _imageLayers = const [];
+  VtChromeProgress? _progress;
+  String? _lastNotification;
+
   /// Host→guest bytes coalesced onto the tick loop (avoids racing Isolate.run).
   final BytesBuilder _pendingInput = BytesBuilder(copy: false);
 
@@ -61,6 +72,15 @@ class ProductSession extends ChangeNotifier {
   bool get closed => _closed;
   VtTerminal? get vt => _vt;
   AgentOsVm? get vm => _vm;
+
+  /// Pre-decoded Kitty images for the painter (z < 0).
+  List<VtPaintImage> get imagesBelow => _imageCache.belowText;
+
+  /// Pre-decoded Kitty images for the painter (z >= 0).
+  List<VtPaintImage> get imagesAbove => _imageCache.aboveText;
+
+  VtChromeProgress? get progress => _progress;
+  String? get lastNotification => _lastNotification;
 
   /// Boot VT + encoder + AgentOS and start the ~50 Hz live loop.
   Future<void> start({
@@ -85,6 +105,10 @@ class ProductSession extends ChangeNotifier {
     _lastError = null;
     _title = '';
     _pwd = '';
+    _progress = null;
+    _lastNotification = null;
+    _imageLayers = const [];
+    _compress.reset();
     notifyListeners();
 
     try {
@@ -107,7 +131,9 @@ class ProductSession extends ChangeNotifier {
         '\x1b[90mgrid ${vt.cols}×${vt.rows}  '
         'cell ${cellW}×$cellH\x1b[0m\r\n',
       );
-      _frame = vt.snapshot();
+      _compress.onWrite(vt.native, vt.handle);
+      _frame = vt.snapshot(previous: _frame);
+      await _syncImages(vt);
       _statusLine = 'booting agentos…';
       notifyListeners();
 
@@ -120,7 +146,8 @@ class ProductSession extends ChangeNotifier {
       _started = true;
       _busy = false;
       _statusLine = 'live  ${vt.cols}×${vt.rows}';
-      _frame = vt.snapshot();
+      _frame = vt.snapshot(previous: _frame);
+      await _syncImages(vt);
       notifyListeners();
 
       _loop = Timer.periodic(const Duration(milliseconds: 20), (_) {
@@ -133,7 +160,9 @@ class ProductSession extends ChangeNotifier {
       _busy = false;
       try {
         _vt?.writeText('\r\n\x1b[1;31merror: $e\x1b[0m\r\n');
-        if (_vt != null) _frame = _vt!.snapshot();
+        if (_vt != null) {
+          _frame = _vt!.snapshot(previous: _frame);
+        }
       } catch (_) {}
       notifyListeners();
       rethrow;
@@ -169,6 +198,7 @@ class ProductSession extends ChangeNotifier {
       }
       if (out.isNotEmpty) {
         vt.writeGuest(out);
+        _compress.onWrite(vt.native, vt.handle);
       }
 
       // WRITE_PTY → guest.
@@ -194,7 +224,6 @@ class ProductSession extends ChangeNotifier {
           case VtChromePwdChanged():
             break;
           case VtChromeClipboardWrite(:final parts):
-            // Best-effort: first text-like part → system clipboard.
             for (final p in parts) {
               if (p.data.isEmpty) continue;
               final mime = p.mime.toLowerCase();
@@ -203,12 +232,22 @@ class ProductSession extends ChangeNotifier {
                   mime == 'text/plain') {
                 try {
                   unawaited(Clipboard.setData(
-                    ClipboardData(text: utf8.decode(p.data, allowMalformed: true)),
+                    ClipboardData(
+                      text: utf8.decode(p.data, allowMalformed: true),
+                    ),
                   ));
                 } catch (_) {}
                 break;
               }
             }
+          case VtChromeProgress(:final state, :final progress):
+            _progress = VtChromeProgress(state: state, progress: progress);
+            if (state == VtProgressState.remove) {
+              _progress = null;
+            }
+          case VtChromeNotification(:final title, :final body):
+            _lastNotification =
+                title.isEmpty ? body : (body.isEmpty ? title : '$title — $body');
         }
       }
       if (chromeDirty) {
@@ -223,11 +262,27 @@ class ProductSession extends ChangeNotifier {
         _atPrompt = st.atPrompt;
       } catch (_) {}
 
-      _frame = vt.snapshot();
+      _frame = vt.snapshot(previous: _frame);
+      await _syncImages(vt);
       _statusLine = _composeStatus(vt);
       notifyListeners();
     } finally {
       _ticking = false;
+    }
+  }
+
+  Future<void> _syncImages(VtTerminal vt) async {
+    try {
+      _imageLayers = vt.snapshotImages();
+      await _imageCache.sync(
+        _imageLayers,
+        originX: _padL.toDouble(),
+        originY: _padT.toDouble(),
+        cellW: _cellW.toDouble(),
+        cellH: _cellH.toDouble(),
+      );
+    } catch (_) {
+      // Graphics optional at runtime if build disabled them.
     }
   }
 
@@ -251,7 +306,26 @@ class ProductSession extends ChangeNotifier {
     if (_atPrompt) parts.add('prompt');
     if (_lastTick == AgentOsTickState.exited) parts.add('exited');
     if (_lastTick == AgentOsTickState.waiting) parts.add('wait');
+    final prog = _progress;
+    if (prog != null) {
+      parts.add(_formatProgress(prog));
+    }
+    if (_lastNotification != null && _lastNotification!.isNotEmpty) {
+      parts.add('notify: $_lastNotification');
+    }
     return parts.join('  ·  ');
+  }
+
+  String _formatProgress(VtChromeProgress p) {
+    return switch (p.state) {
+      VtProgressState.remove => '',
+      VtProgressState.set => p.progress >= 0 ? 'prog ${p.progress}%' : 'prog',
+      VtProgressState.error =>
+        p.progress >= 0 ? 'prog err ${p.progress}%' : 'prog err',
+      VtProgressState.indeterminate => 'prog …',
+      VtProgressState.pause =>
+        p.progress >= 0 ? 'prog pause ${p.progress}%' : 'prog pause',
+    };
   }
 
   void _flashBell() {
@@ -354,9 +428,6 @@ class ProductSession extends ChangeNotifier {
   }
 
   /// Surface pixel pointer → selection gesture (cell space).
-  ///
-  /// [kind]: [kSelectionGesturePress] / [kSelectionGestureDrag] /
-  /// [kSelectionGestureRelease].
   Future<void> onPointer({
     required int kind,
     double x = 0,
@@ -386,7 +457,7 @@ class ProductSession extends ChangeNotifier {
         screenHeight: _vt!.rows * _cellH + padT,
       );
       if (ok) {
-        _frame = _vt!.snapshot();
+        _frame = _vt!.snapshot(previous: _frame);
         notifyListeners();
       }
     } catch (_) {}
@@ -409,7 +480,8 @@ class ProductSession extends ChangeNotifier {
     final delta = dy < 0 ? -rows : rows;
     try {
       _vt!.scrollViewport(deltaRows: delta);
-      _frame = _vt!.snapshot();
+      _frame = _vt!.snapshot(previous: _frame);
+      await _syncImages(_vt!);
       notifyListeners();
     } catch (_) {}
   }
@@ -422,22 +494,46 @@ class ProductSession extends ChangeNotifier {
     _cellH = cellH;
     try {
       vt.resize(cols, rows, cellW: cellW, cellH: cellH);
-      _frame = vt.snapshot();
+      _frame = vt.snapshot(previous: _frame);
+      await _syncImages(vt);
       _statusLine = _composeStatus(vt);
       notifyListeners();
     } catch (_) {}
   }
 
+  /// Debug: encode full terminal snapshot blob.
+  Uint8List? debugSnapshotEncode() {
+    final vt = _vt;
+    if (vt == null || _closed) return null;
+    try {
+      return snapshotEncode(vt.native, vt.handle);
+    } catch (_) {
+      return null;
+    }
+  }
+
+  /// Debug: format active screen as plain / vt / html.
+  String? debugFormat({VtFormatKind format = VtFormatKind.plain}) {
+    final vt = _vt;
+    if (vt == null || _closed) return null;
+    try {
+      return formatTerminal(vt.native, vt.handle, format: format);
+    } catch (_) {
+      return null;
+    }
+  }
+
   /// Close VM + VT + encoder and stop the loop.
-  ///
-  /// Prefer this over [ChangeNotifier.dispose] so AgentOS close can complete.
   Future<void> disposeAsync({bool notify = true}) async {
     _loop?.cancel();
     _loop = null;
     _bellTimer?.cancel();
     _bellTimer = null;
+    _compress.dispose();
+    _imageCache.dispose();
     _started = false;
     _pendingInput.clear();
+    _imageLayers = const [];
 
     final vm = _vm;
     _vm = null;
@@ -454,8 +550,11 @@ class ProductSession extends ChangeNotifier {
       } catch (_) {}
     }
     try {
-      if (vt != null) sel?.close(vt.handle);
-      else sel?.close();
+      if (vt != null) {
+        sel?.close(vt.handle);
+      } else {
+        sel?.close();
+      }
     } catch (_) {}
     try {
       enc?.close();
@@ -478,6 +577,8 @@ class ProductSession extends ChangeNotifier {
     _loop = null;
     _bellTimer?.cancel();
     _bellTimer = null;
+    _compress.dispose();
+    _imageCache.dispose();
     try {
       _encoder?.close();
     } catch (_) {}

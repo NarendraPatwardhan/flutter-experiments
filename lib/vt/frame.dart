@@ -94,6 +94,7 @@ class VtFrame {
     this.cursorBlink = false,
     this.cursorOnWideTail = false,
     this.dirty = VtDirtyKind.full,
+    this.dirtyRows,
   });
 
   final int cols;
@@ -114,6 +115,11 @@ class VtFrame {
   final bool cursorOnWideTail;
   final VtDirtyKind dirty;
 
+  /// When [dirty] is [VtDirtyKind.partial], the set of row indices that
+  /// changed relative to the previous frame. Null means all rows dirty
+  /// (full rebuild) or unknown.
+  final Set<int>? dirtyRows;
+
   VtCell cellAt(int x, int y) {
     if (x < 0 || y < 0 || x >= cols || y >= rows) {
       return const VtCell();
@@ -129,6 +135,44 @@ class VtFrame {
       background: VtTheme.background,
       foreground: VtTheme.foreground,
       dirty: VtDirtyKind.clean,
+      dirtyRows: const <int>{},
+    );
+  }
+
+  /// Copy with updated cursor / chrome colors while keeping cell buffer.
+  ///
+  /// Cursor position/color use explicit clear flags because null is meaningful
+  /// (cursor not in viewport / no explicit color).
+  VtFrame copyWithMeta({
+    Color? background,
+    Color? foreground,
+    Color? cursorColor,
+    int? cursorX,
+    int? cursorY,
+    bool? cursorVisible,
+    VtCursorStyle? cursorStyle,
+    bool? cursorBlink,
+    bool? cursorOnWideTail,
+    VtDirtyKind? dirty,
+    Set<int>? dirtyRows,
+    bool clearCursorColor = false,
+    bool clearCursorPos = false,
+  }) {
+    return VtFrame(
+      cols: cols,
+      rows: rows,
+      cells: cells,
+      background: background ?? this.background,
+      foreground: foreground ?? this.foreground,
+      cursorColor: clearCursorColor ? null : (cursorColor ?? this.cursorColor),
+      cursorX: clearCursorPos ? cursorX : (cursorX ?? this.cursorX),
+      cursorY: clearCursorPos ? cursorY : (cursorY ?? this.cursorY),
+      cursorVisible: cursorVisible ?? this.cursorVisible,
+      cursorStyle: cursorStyle ?? this.cursorStyle,
+      cursorBlink: cursorBlink ?? this.cursorBlink,
+      cursorOnWideTail: cursorOnWideTail ?? this.cursorOnWideTail,
+      dirty: dirty ?? this.dirty,
+      dirtyRows: dirtyRows ?? this.dirtyRows,
     );
   }
 }
@@ -176,4 +220,36 @@ class VtChromeClipboardWrite extends VtChromeEvent {
   /// 0=standard, 1=selection, 2=primary
   final int location;
   final List<({String mime, List<int> data})> parts;
+}
+
+/// OSC 9;4 progress report (ConEmu / Ghostty progress).
+enum VtProgressState {
+  remove,
+  set,
+  error,
+  indeterminate,
+  pause,
+}
+
+class VtChromeProgress extends VtChromeEvent {
+  const VtChromeProgress({
+    required this.state,
+    required this.progress,
+  });
+
+  final VtProgressState state;
+
+  /// 0–100, or -1 when omitted by the protocol.
+  final int progress;
+}
+
+/// OSC 9 / OSC 777 desktop notification request.
+class VtChromeNotification extends VtChromeEvent {
+  const VtChromeNotification({
+    required this.title,
+    required this.body,
+  });
+
+  final String title;
+  final String body;
 }

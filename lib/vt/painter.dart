@@ -1,6 +1,8 @@
 import 'package:flutter/material.dart';
 
 import 'frame.dart';
+import 'graphics.dart';
+import 'image_cache.dart';
 import 'metrics.dart';
 
 /// Ghostty-style cell painter.
@@ -14,6 +16,7 @@ import 'metrics.dart';
 ///
 /// G1 style: selection invert, bold/italic/faint, underline/strike/overline,
 /// invisible skip, cursor blink phase, unfocused hollow.
+/// G4: Kitty image layers (z < 0 below text, z >= 0 above).
 class VtPainter extends CustomPainter {
   VtPainter({
     required this.frame,
@@ -21,6 +24,8 @@ class VtPainter extends CustomPainter {
     required this.padding,
     this.focused = true,
     this.blinkPhase = true,
+    this.imagesBelow = const [],
+    this.imagesAbove = const [],
   });
 
   final VtFrame frame;
@@ -31,6 +36,12 @@ class VtPainter extends CustomPainter {
   /// When [frame.cursorBlink] is true, cursor is drawn only if [blinkPhase]
   /// is true (driven by a host ticker). Ignored when blink is off.
   final bool blinkPhase;
+
+  /// Pre-decoded Kitty images with z < 0 (between bg and glyphs).
+  final List<VtPaintImage> imagesBelow;
+
+  /// Pre-decoded Kitty images with z >= 0 (after glyphs).
+  final List<VtPaintImage> imagesAbove;
 
   @override
   void paint(Canvas canvas, Size size) {
@@ -50,6 +61,8 @@ class VtPainter extends CustomPainter {
     final cursorColor = frame.cursorColor ?? frame.foreground;
 
     // --- backgrounds (full cell, Ghostty cell_bg pass) ---
+    // When partial dirty is present we still paint all cells — Flutter
+    // CustomPainter has no retained row buffer; dirtyRows is informational.
     for (var y = 0; y < frame.rows; y++) {
       for (var x = 0; x < frame.cols; x++) {
         final cell = frame.cellAt(x, y);
@@ -68,6 +81,9 @@ class VtPainter extends CustomPainter {
         }
       }
     }
+
+    // --- Kitty images below text (z < 0) ---
+    paintVtImages(canvas, imagesBelow);
 
     final blinkOk = !frame.cursorBlink || blinkPhase;
     final showCursor = frame.cursorVisible &&
@@ -224,6 +240,9 @@ class VtPainter extends CustomPainter {
         }
       }
     }
+
+    // --- Kitty images above text (z >= 0) ---
+    paintVtImages(canvas, imagesAbove);
 
     // --- bar / underline / hollow after text ---
     if (showCursor && cursorStyle != VtCursorStyle.block) {
@@ -424,7 +443,9 @@ class VtPainter extends CustomPainter {
         oldDelegate.metrics != metrics ||
         oldDelegate.padding != padding ||
         oldDelegate.focused != focused ||
-        oldDelegate.blinkPhase != blinkPhase;
+        oldDelegate.blinkPhase != blinkPhase ||
+        !identical(oldDelegate.imagesBelow, imagesBelow) ||
+        !identical(oldDelegate.imagesAbove, imagesAbove);
   }
 }
 
@@ -436,6 +457,8 @@ class VtView extends StatelessWidget {
     this.padding = EdgeInsets.zero,
     this.focused = true,
     this.blinkPhase = true,
+    this.imagesBelow = const [],
+    this.imagesAbove = const [],
   });
 
   final VtFrame frame;
@@ -443,6 +466,8 @@ class VtView extends StatelessWidget {
   final EdgeInsets padding;
   final bool focused;
   final bool blinkPhase;
+  final List<VtPaintImage> imagesBelow;
+  final List<VtPaintImage> imagesAbove;
 
   @override
   Widget build(BuildContext context) {
@@ -455,6 +480,8 @@ class VtView extends StatelessWidget {
           padding: padding,
           focused: focused,
           blinkPhase: blinkPhase,
+          imagesBelow: imagesBelow,
+          imagesAbove: imagesAbove,
         ),
         child: const SizedBox.expand(),
       ),
