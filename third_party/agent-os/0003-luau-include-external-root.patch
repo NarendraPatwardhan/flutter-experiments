@@ -1,10 +1,12 @@
+diff --git a/memcontainers/programs/luau/glue/BUILD.bazel b/memcontainers/programs/luau/glue/BUILD.bazel
+index 96cd2b7..f869703 100644
 --- a/memcontainers/programs/luau/glue/BUILD.bazel
 +++ b/memcontainers/programs/luau/glue/BUILD.bazel
-@@ -105,7 +105,11 @@
+@@ -104,8 +104,11 @@ zig_binary(
+     copts = [
          # Force Luau's public C API to extern "C" so the Zig entry's C-mode @cImport links it (else
          # the API is C++-mangled, resolves to `env` imports, and the VM is dead-stripped).
-+        # Nested module (@agent-os+) and monorepo: make -include basenames resolve. Without these
-+        # -I flags, zig c++ reports CacheCheckFailed on every Luau .cpp under bzlmod.
++        # Nested @agent-os+ and monorepo: -I so -include basenames resolve (else zig CacheCheckFailed).
 +        "-Iexternal/agent-os+/memcontainers/programs/luau/glue",
 +        "-Imemcontainers/programs/luau/glue",
          "-include",
@@ -13,7 +15,8 @@
          "-fno-exceptions",
          "-fno-rtti",
      ],
-@@ -185,7 +189,11 @@
+@@ -184,8 +187,10 @@ zig_binary(
+     ],
      copts = [
          # Force-include the analysis EH shim into every TU (mc_analysis_abort + try/catch neutralize).
 +        "-Iexternal/agent-os+/memcontainers/programs/luau/glue",
