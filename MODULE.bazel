@@ -16,9 +16,9 @@ git_override(
 
 flutter = use_extension("@rules_flutter//flutter:extensions.bzl", "flutter")
 flutter.toolchain(
-    flutter_version = "3.41.7",
-    # Web is the hermetic / RBE-friendly path. Linux desktop needs host GTK and
-    # is tagged manual on //:app.linux.
+    # Match rules_flutter v0.2.1 hello_world (offline package_graph works here).
+    # 3.41.x failed on remote with package_graph.dart null check under --no-pub.
+    flutter_version = "3.24.0",
     precache = ["web"],
 )
 use_repo(
