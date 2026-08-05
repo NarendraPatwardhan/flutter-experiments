@@ -13,9 +13,6 @@ enum AgentOsTickState {
 }
 
 /// Single-owner AgentOS VM over the product C ABI.
-///
-/// Native handles live in the process-wide host table inside the cdylib.
-/// Long work runs on a worker isolate (DirtyCpu analogue).
 class AgentOsVm {
   AgentOsVm._(this._handle, this._libraryPath);
 
@@ -23,36 +20,54 @@ class AgentOsVm {
   final String? _libraryPath;
   bool _closed = false;
 
+  /// Boot [kernelBytes] with optional base image tar (e.g. loom.tar).
   static Future<AgentOsVm> boot(
     Uint8List kernelBytes, {
+    Uint8List? imageBytes,
     String? libraryPath,
   }) {
     final path = libraryPath;
-    final bytes = Uint8List.fromList(kernelBytes);
+    final kernel = Uint8List.fromList(kernelBytes);
+    final image = imageBytes == null ? null : Uint8List.fromList(imageBytes);
     return Isolate.run(() {
       final native = AgentOsNative.open(path);
-      final kernel = mallocBytes<Uint8>(bytes.length, sizeOf<Uint8>());
+      final kPtr = mallocBytes<Uint8>(kernel.length, sizeOf<Uint8>());
       final out = mallocBytes<Uint64>(1, sizeOf<Uint64>());
+      Pointer<Uint8> iPtr = nullptr;
       try {
-        kernel.asTypedList(bytes.length).setAll(0, bytes);
-        final rc = native.boot(kernel, bytes.length, out);
+        kPtr.asTypedList(kernel.length).setAll(0, kernel);
+        var imageLen = 0;
+        if (image != null && image.isNotEmpty) {
+          iPtr = mallocBytes<Uint8>(image.length, sizeOf<Uint8>());
+          iPtr.asTypedList(image.length).setAll(0, image);
+          imageLen = image.length;
+        }
+        final rc = native.boot(kPtr, kernel.length, iPtr, imageLen, out);
         if (rc != 0) {
           throw StateError('aos_vm_boot failed: ${native.errorMessage()}');
         }
         return out.value;
       } finally {
-        freePtr(kernel);
+        freePtr(kPtr);
         freePtr(out);
+        if (iPtr != nullptr) freePtr(iPtr);
       }
     }).then((handle) => AgentOsVm._(handle, path));
   }
 
-  static Future<AgentOsVm> bootFromFile(
-    String kernelPath, {
+  static Future<AgentOsVm> bootFromFiles({
+    required String kernelPath,
+    String? imagePath,
     String? libraryPath,
   }) async {
-    final fileBytes = await File(kernelPath).readAsBytes();
-    return boot(Uint8List.fromList(fileBytes), libraryPath: libraryPath);
+    final kernel = await File(kernelPath).readAsBytes();
+    final image =
+        imagePath == null ? null : await File(imagePath).readAsBytes();
+    return boot(
+      Uint8List.fromList(kernel),
+      imageBytes: image == null ? null : Uint8List.fromList(image),
+      libraryPath: libraryPath,
+    );
   }
 
   Future<AgentOsTickState> tick() {
@@ -140,7 +155,6 @@ class AgentOsVm {
     });
   }
 
-  /// Structured guest exec (shell command). Long work off the UI isolate.
   Future<AgentOsExecResult> exec(
     String cmd, {
     int maxTicks = 0,

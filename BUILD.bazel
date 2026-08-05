@@ -10,26 +10,35 @@ filegroup(
     srcs = ["@agent-os//memcontainers/kernel/rust:kernel"],
 )
 
+# Loom guest image (posix + shell + luau) — public @agent-os image tar.
+filegroup(
+    name = "agentos_loom",
+    srcs = ["@agent-os//memcontainers/images:loom"],
+)
+
 # Product C ABI over KernelHost + kernel wasm for staging next to the Linux app.
 alias(
     name = "agentos_flutter_host",
     actual = "//native/agentos_flutter_host:agentos_flutter_host",
 )
 
-# Stage kernel + opt+stripped host .so (strip is //native/agentos_flutter_host genrule).
+# Stage kernel + loom image + opt+stripped host .so.
 genrule(
     name = "agentos_native_bundle",
     srcs = [
         ":agentos_kernel",
+        ":agentos_loom",
         ":agentos_flutter_host",
     ],
     outs = [
         "agentos_native/kernel.wasm",
+        "agentos_native/loom.tar",
         "agentos_native/libagentos_flutter_host.so",
     ],
     cmd = """
 set -euo pipefail
 cp $(location :agentos_kernel) $(location agentos_native/kernel.wasm)
+cp $(location :agentos_loom) $(location agentos_native/loom.tar)
 cp $(location :agentos_flutter_host) $(location agentos_native/libagentos_flutter_host.so)
 """,
 )

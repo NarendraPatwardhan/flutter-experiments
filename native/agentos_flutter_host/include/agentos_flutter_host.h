@@ -22,7 +22,14 @@ enum {
 
 /* All fallible functions return 0 on success, -1 on error (see aos_last_error). */
 
-int aos_vm_boot(const uint8_t *kernel, size_t kernel_len, aos_vm_t *out_vm);
+/* Boot from kernel.wasm. Optional base image tar (e.g. loom.tar): pass NULL/0 for none.
+ * Host ticks to first shell prompt when the image provides /bin/sh. */
+int aos_vm_boot(
+    const uint8_t *kernel,
+    size_t kernel_len,
+    const uint8_t *image,
+    size_t image_len,
+    aos_vm_t *out_vm);
 
 int aos_vm_tick(aos_vm_t vm, int32_t *out_state);
 
@@ -34,11 +41,8 @@ int aos_vm_take_output(aos_vm_t vm, uint8_t *buf, size_t cap);
 
 int aos_vm_close(aos_vm_t vm);
 
-/* Run a shell command via the host structured exec path (KernelHost::exec).
- * On success: out_exit is set; up to stdout_cap/stderr_cap bytes are copied
- * and *stdout_len / *stderr_len report how many were written (may be truncated).
- * max_ticks bounds the host tick loop (0 => default 5_000_000).
- */
+/* Run a shell command via KernelHost::exec.
+ * max_ticks: 0 => default 5_000_000. */
 int aos_vm_exec(
     aos_vm_t vm,
     const char *cmd,

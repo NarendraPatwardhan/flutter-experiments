@@ -14,11 +14,12 @@ AgentOS is **not** vendored and **not** a `local_path_override`. Root `MODULE.ba
 
 | Target | Purpose |
 |--------|---------|
-| `//:linux_product_bundle` | **Ship tree** — Flutter Linux app + stripped host `.so` + `kernel.wasm` |
+| `//:linux_product_bundle` | **Ship tree** — app + host `.so` + `kernel.wasm` + `loom.tar` |
 | `//:app.linux` | Flutter Linux app only |
-| `//:agentos_native_bundle` | `kernel.wasm` + `libagentos_flutter_host.so` |
+| `//:agentos_native_bundle` | `kernel.wasm` + `loom.tar` + host `.so` |
 | `//:agentos_flutter_host` | Opt + genrule-stripped C ABI host |
 | `//:agentos_kernel` | Kernel wasm from pin |
+| `//:agentos_loom` | Loom guest image tar from pin |
 
 ## Build (zero local analysis)
 

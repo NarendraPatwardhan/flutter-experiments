@@ -57,11 +57,14 @@ fn with_capture(builder: KernelHostBuilder, out: &Arc<Mutex<Vec<u8>>>) -> Kernel
 
 /// # Safety
 /// `kernel` must point to `kernel_len` readable bytes.
+/// `image` may be null when `image_len == 0` (no base image).
 /// `out_vm` must be a valid writable pointer.
 #[no_mangle]
 pub unsafe extern "C" fn aos_vm_boot(
     kernel: *const u8,
     kernel_len: usize,
+    image: *const u8,
+    image_len: usize,
     out_vm: *mut u64,
 ) -> i32 {
     clear_error();
@@ -69,9 +72,21 @@ pub unsafe extern "C" fn aos_vm_boot(
         set_error("aos_vm_boot: null or empty kernel");
         return -1;
     }
+    if image_len > 0 && image.is_null() {
+        set_error("aos_vm_boot: image_len > 0 but image is null");
+        return -1;
+    }
     let bytes = std::slice::from_raw_parts(kernel, kernel_len).to_vec();
+    let base = if image_len == 0 {
+        None
+    } else {
+        Some(std::slice::from_raw_parts(image, image_len).to_vec())
+    };
     let out = Arc::new(Mutex::new(Vec::new()));
-    let builder = with_capture(KernelHostBuilder::new(bytes), &out);
+    let builder = with_capture(
+        KernelHostBuilder::new(bytes).with_base_image(base),
+        &out,
+    );
     let host = match builder.build() {
         Ok(h) => h,
         Err(e) => {

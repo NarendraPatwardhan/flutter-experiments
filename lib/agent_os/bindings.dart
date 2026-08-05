@@ -1,6 +1,5 @@
-// Hand-written dart:ffi bindings for agentos_flutter_host.h (first cut).
+// Hand-written dart:ffi bindings for agentos_flutter_host.h.
 // Keep in sync with native/agentos_flutter_host/include/agentos_flutter_host.h
-// No package:ffi — only dart:ffi + libc malloc.
 
 import 'dart:ffi';
 import 'dart:io';
@@ -30,11 +29,15 @@ void freePtr(Pointer p) => _free(p.cast());
 typedef _BootNative = Int32 Function(
   Pointer<Uint8> kernel,
   Size kernelLen,
+  Pointer<Uint8> image,
+  Size imageLen,
   Pointer<Uint64> outVm,
 );
 typedef _BootDart = int Function(
   Pointer<Uint8> kernel,
   int kernelLen,
+  Pointer<Uint8> image,
+  int imageLen,
   Pointer<Uint64> outVm,
 );
 
@@ -131,7 +134,6 @@ class AgentOsNative {
   String errorMessage() {
     final p = lastError();
     if (p == nullptr) return 'unknown error';
-    // Read C string until NUL.
     final units = <int>[];
     for (var i = 0;; i++) {
       final b = p[i];

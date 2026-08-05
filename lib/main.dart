@@ -2,6 +2,7 @@ import 'dart:convert';
 import 'dart:io';
 
 import 'package:flutter/material.dart';
+import 'package:flutter/scheduler.dart';
 
 import 'agent_os/vm.dart';
 
@@ -37,12 +38,18 @@ class HomePage extends StatefulWidget {
 }
 
 class _HomePageState extends State<HomePage> {
-  String _status =
-      'Idle — product bundle stages lib/ + data/kernel.wasm for smoke.';
+  String _status = 'Starting AgentOS (loom)…';
   String _output = '';
-  bool _busy = false;
+  bool _busy = true;
 
-  ({String lib, String kernel})? _locateAssets() {
+  @override
+  void initState() {
+    super.initState();
+    // Auto-run so launching the binary shows guest output immediately.
+    SchedulerBinding.instance.addPostFrameCallback((_) => _smoke());
+  }
+
+  ({String lib, String kernel, String? loom})? _locateAssets() {
     final exeDir = File(Platform.resolvedExecutable).parent.path;
     final libCandidates = [
       '$exeDir/lib/libagentos_flutter_host.so',
@@ -51,10 +58,14 @@ class _HomePageState extends State<HomePage> {
     final kernelCandidates = [
       '$exeDir/data/kernel.wasm',
       '$exeDir/kernel.wasm',
-      '$exeDir/lib/kernel.wasm',
+    ];
+    final loomCandidates = [
+      '$exeDir/data/loom.tar',
+      '$exeDir/loom.tar',
     ];
     String? libPath;
     String? kernelPath;
+    String? loomPath;
     for (final p in libCandidates) {
       if (File(p).existsSync()) {
         libPath = p;
@@ -67,8 +78,14 @@ class _HomePageState extends State<HomePage> {
         break;
       }
     }
+    for (final p in loomCandidates) {
+      if (File(p).existsSync()) {
+        loomPath = p;
+        break;
+      }
+    }
     if (libPath == null || kernelPath == null) return null;
-    return (lib: libPath, kernel: kernelPath);
+    return (lib: libPath, kernel: kernelPath, loom: loomPath);
   }
 
   Future<void> _smoke() async {
@@ -82,30 +99,62 @@ class _HomePageState extends State<HomePage> {
       if (assets == null) {
         setState(() {
           _status =
-              'Native assets missing under exe dir lib/ and data/.\n'
-              'Build //:linux_product_bundle on BuildBuddy and unpack to dist/linux.';
+              'Native assets missing.\n'
+              'Need lib/libagentos_flutter_host.so and data/kernel.wasm '
+              '(and data/loom.tar for a full shell).';
+          _busy = false;
         });
         return;
       }
-      setState(() => _status = 'Booting AgentOS kernel…');
-      final vm = await AgentOsVm.bootFromFile(
-        assets.kernel,
+      if (assets.loom == null) {
+        setState(() {
+          _status =
+              'loom.tar missing under data/ — rebuild //:linux_product_bundle.';
+          _busy = false;
+        });
+        return;
+      }
+
+      setState(() => _status = 'Booting kernel + loom image…');
+      final vm = await AgentOsVm.bootFromFiles(
+        kernelPath: assets.kernel,
+        imagePath: assets.loom,
         libraryPath: assets.lib,
       );
       try {
-        final state = await vm.tick();
-        final bootOut = await vm.takeOutput();
-        setState(() => _status = 'Boot OK (tick=$state). Running exec…');
-        // Minimal structured command; no base image ⇒ may fail closed without /bin/sh.
-        final result = await vm.exec('echo agentos-flutter-host');
+        // Extra ticks so the login shell can paint if it was still settling.
+        for (var i = 0; i < 64; i++) {
+          final s = await vm.tick();
+          if (s == AgentOsTickState.exited) break;
+          if (s == AgentOsTickState.waiting) break;
+        }
+        final bootBytes = await vm.takeOutput();
+        final bootText = utf8.decode(bootBytes, allowMalformed: true);
+
+        setState(() => _status = 'Running guest commands…');
+        final echo = await vm.exec('echo Hello from AgentOS loom');
+        final uname = await vm.exec('uname -a');
+        final ls = await vm.exec('ls /bin | head -n 20');
+
         final text = StringBuffer()
-          ..writeln('--- take_output ---')
-          ..writeln(utf8.decode(bootOut, allowMalformed: true))
-          ..writeln('--- exec exit=${result.exitCode} ---')
-          ..writeln(utf8.decode(result.stdout, allowMalformed: true))
-          ..writeln(utf8.decode(result.stderr, allowMalformed: true));
+          ..writeln('=== shell output after boot ===')
+          ..writeln(bootText.isEmpty ? '(empty — prompt may be quiet)' : bootText)
+          ..writeln()
+          ..writeln('=== exec: echo Hello from AgentOS loom  (exit ${echo.exitCode}) ===')
+          ..writeln(utf8.decode(echo.stdout, allowMalformed: true))
+          ..write(utf8.decode(echo.stderr, allowMalformed: true))
+          ..writeln()
+          ..writeln('=== exec: uname -a  (exit ${uname.exitCode}) ===')
+          ..writeln(utf8.decode(uname.stdout, allowMalformed: true))
+          ..write(utf8.decode(uname.stderr, allowMalformed: true))
+          ..writeln()
+          ..writeln('=== exec: ls /bin | head  (exit ${ls.exitCode}) ===')
+          ..writeln(utf8.decode(ls.stdout, allowMalformed: true))
+          ..write(utf8.decode(ls.stderr, allowMalformed: true));
+
         setState(() {
-          _status = 'Done. exec exit=${result.exitCode}';
+          _status =
+              'OK — loom guest ran (echo exit=${echo.exitCode}, uname exit=${uname.exitCode})';
           _output = text.toString();
         });
       } finally {
@@ -131,21 +180,23 @@ class _HomePageState extends State<HomePage> {
           crossAxisAlignment: CrossAxisAlignment.stretch,
           children: [
             Text(
-              'AgentOS native host',
+              'AgentOS on Flutter (loom)',
               style: theme.textTheme.headlineMedium,
             ),
             const SizedBox(height: 8),
             Text(
-              'C ABI over KernelHost — boot + exec. No JS path.',
+              'Native host · kernel.wasm + loom.tar · no JS path',
               style: theme.textTheme.bodyMedium?.copyWith(
                 color: theme.colorScheme.onSurfaceVariant,
               ),
             ),
             const SizedBox(height: 16),
-            FilledButton(
-              onPressed: _busy ? null : _smoke,
-              child: Text(_busy ? 'Working…' : 'Smoke boot + exec'),
-            ),
+            if (_busy) const LinearProgressIndicator(),
+            if (!_busy)
+              FilledButton(
+                onPressed: _smoke,
+                child: const Text('Run again'),
+              ),
             const SizedBox(height: 16),
             Text(_status, style: theme.textTheme.bodyLarge),
             const SizedBox(height: 12),
@@ -158,7 +209,7 @@ class _HomePageState extends State<HomePage> {
                 child: SingleChildScrollView(
                   padding: const EdgeInsets.all(12),
                   child: SelectableText(
-                    _output,
+                    _output.isEmpty ? '…' : _output,
                     style: theme.textTheme.bodySmall?.copyWith(
                       fontFamily: 'monospace',
                     ),
