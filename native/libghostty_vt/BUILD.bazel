@@ -1,11 +1,11 @@
 # libghostty-vt via rules_zig (product Zig 0.16.0 only).
-# Declared Zig modules + codegen tools — not shell `zig build` of Ghostty's build.zig.
+# Declared Zig modules + codegen — not shell `zig build` of Ghostty's build.zig.
 
 load("@rules_zig//zig:defs.bzl", "zig_binary", "zig_library", "zig_shared_library")
 
 package(default_visibility = ["//visibility:public"])
 
-# --- Option packages (Ghostty uses b.addOptions; we use real zig_library modules) ---
+# --- Option packages ----------------------------------------------------------
 
 zig_library(
     name = "build_options",
@@ -19,9 +19,8 @@ zig_library(
     import_name = "terminal_options",
 )
 
-# --- uucode (one module per compilation; shared source paths OK across targets) ---
+# --- uucode: generate tables, stage one src tree, compile as one module -------
 
-# Explicit labels so rules_zig includes every file in the module.
 UUCODE_GENERATE_SRCS = [
     "@uucode//:src/ascii.zig",
     "@uucode//:src/build_config.zig",
@@ -40,21 +39,22 @@ UUCODE_GENERATE_SRCS = [
     "@uucode//:src/utf8.zig",
 ]
 
-UUCODE_LIB_SRCS = [
-    "@uucode//:src/ascii.zig",
-    "@uucode//:src/build_config.zig",
-    "@uucode//:src/code_point.zig",
-    "@uucode//:src/components.zig",
-    "@uucode//:src/config.zig",
-    "@uucode//:src/fields.zig",
-    "@uucode//:src/get.zig",
-    "@uucode//:src/grapheme.zig",
-    "@uucode//:src/multi_slice.zig",
-    "@uucode//:src/quirks.zig",
-    "@uucode//:src/root.zig",
-    "@uucode//:src/storage.zig",
-    "@uucode//:src/types.zig",
-    "@uucode//:src/utf8.zig",
+# Files that belong in the runtime uucode module (no generate.zig).
+UUCODE_LIB_BASENAMES = [
+    "ascii.zig",
+    "build_config.zig",
+    "code_point.zig",
+    "components.zig",
+    "config.zig",
+    "fields.zig",
+    "get.zig",
+    "grapheme.zig",
+    "multi_slice.zig",
+    "quirks.zig",
+    "root.zig",
+    "storage.zig",
+    "types.zig",
+    "utf8.zig",
 ]
 
 zig_binary(
@@ -64,12 +64,15 @@ zig_binary(
     extra_srcs = ["@uucode//:ucd"],
 )
 
-# Run generator with cwd = @uucode root (UCD under ucd/).
+# Produce tables.zig then stage a full src/ tree so @import("tables.zig") resolves
+# next to get.zig (rules_zig relative imports use the on-disk path of the importer).
 genrule(
-    name = "gen_uucode_tables",
+    name = "uucode_staged_src",
     srcs = ["@uucode//:tree"],
     tools = [":uucode_generate"],
-    outs = ["gen/tables.zig"],
+    outs = ["uucode_staged/src/%s" % f for f in UUCODE_LIB_BASENAMES] + [
+        "uucode_staged/src/tables.zig",
+    ],
     cmd = """
 set -euo pipefail
 ROOT=""
@@ -85,22 +88,34 @@ if [ -z "$$ROOT" ] || [ ! -d "$$ROOT/ucd" ]; then
   echo "uucode root/ucd not found" >&2
   exit 1
 fi
+STAGED=$$(mktemp -d)
+mkdir -p "$$STAGED/src"
+# Copy lib sources into stage (no generate.zig).
+for f in ascii.zig build_config.zig code_point.zig components.zig config.zig \\
+         fields.zig get.zig grapheme.zig multi_slice.zig quirks.zig root.zig \\
+         storage.zig types.zig utf8.zig; do
+  cp -f "$$ROOT/src/$$f" "$$STAGED/src/$$f"
+done
 GEN=$(location :uucode_generate)
-OUT=$(location gen/tables.zig)
 GEN_ABS=$$(cd $$(dirname "$$GEN") && pwd)/$$(basename "$$GEN")
-OUT_ABS=$$(cd $$(dirname "$$OUT") && pwd)/$$(basename "$$OUT")
 cd "$$ROOT"
-"$$GEN_ABS" "$$OUT_ABS"
+"$$GEN_ABS" "$$STAGED/src/tables.zig"
+# Emit declared outs
+OUTDIR=$$(dirname $(location uucode_staged/src/root.zig))
+cp -a "$$STAGED/src/." "$$OUTDIR/"
 """,
 )
 
-# uucode lib: root + support + generated tables.zig (same module file imports).
+UUCODE_STAGED_SRCS = [
+    "uucode_staged/src/%s" % f for f in UUCODE_LIB_BASENAMES
+] + [
+    "uucode_staged/src/tables.zig",
+]
+
 zig_library(
     name = "uucode",
-    main = "@uucode//:src/root.zig",
-    srcs = UUCODE_LIB_SRCS + [
-        ":gen/tables.zig",
-    ],
+    main = "uucode_staged/src/root.zig",
+    srcs = UUCODE_STAGED_SRCS,
     import_name = "uucode",
 )
 
@@ -180,7 +195,7 @@ zig_library(
     import_name = "symbols_tables",
 )
 
-# --- libghostty-vt shared library (C ABI root = lib_vt.zig) -------------------
+# --- libghostty-vt shared library --------------------------------------------
 
 zig_shared_library(
     name = "libghostty_vt",
