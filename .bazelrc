@@ -1,8 +1,12 @@
 # ---------------------------------------------------------------------------
-# When Bazel runs (on BuildBuddy remote runner via `bb remote`, or Workflows):
-# force RBE spawns. Agent hosts must NOT run local `bb build` / `bazel build`.
-# Zero local analysis path:  bb remote build --run_from_branch=main //:app.web
-# Auth: bb login. Never put API keys in this file.
+# Zero local analysis on the AGENT HOST:
+#   git push && bb remote --run_from_branch=main build //:app.web
+#
+# On the BuildBuddy remote runner (coordinator), Bazel must be able to run
+# rules_flutter SetupFlutterWorkspace as a *runner-local* action. Pure
+# spawn_strategy=remote alone breaks that mnemonic. Runner-local ≠ agent-local.
+#
+# Auth: bb login. Never put API keys here.
 # ---------------------------------------------------------------------------
 common --enable_bzlmod
 common --enable_workspace=false
@@ -11,38 +15,30 @@ common --enable_platform_specific_config
 common --incompatible_strict_action_env
 common --incompatible_disallow_empty_glob=false
 
-# Do NOT pin startup --output_user_root to a host path: `bb remote` runners
-# cannot mkdir /mnt/workspace/... and must use the runner default cache.
-
-# Hermetic Java for analysis (on whatever machine runs Bazel — prefer remote runner).
+# Hermetic Java for analysis (on the remote runner under bb remote).
 common --java_runtime_version=remotejdk_21
 common --tool_java_runtime_version=remotejdk_21
 
 build --verbose_failures
 
-# --- BuildBuddy: always on (not an optional --config) -----------------------
+# BuildBuddy BES + cache + executor (available to the remote runner).
 common --bes_results_url=https://app.buildbuddy.io/invocation/
 common --bes_backend=grpcs://remote.buildbuddy.io
 common --remote_cache=grpcs://remote.buildbuddy.io
 common --remote_executor=grpcs://remote.buildbuddy.io
 
-# RBE worker image (python3; same family as opencascade-bazel)
 common --remote_default_exec_properties=container-image=docker://gcr.io/flame-public/rbe-ubuntu20-04@sha256:036ae8c90876fa22da9ace6f8218e614f4cd500a154fc162973fff691e72d28e
 common --remote_default_exec_properties=EstimatedCPU=4
 common --remote_default_exec_properties=EstimatedMemory=8GB
 common --remote_default_exec_properties=EstimatedFreeDiskBytes=20GB
 common --remote_default_exec_properties=default-timeout=30m
 
-# Spawns: remote only. Fail if they cannot run remote.
-common --spawn_strategy=remote
-common --strategy=remote
-common --genrule_strategy=remote
-common --remote_local_fallback=false
-common --local_resources=cpu=0
-common --local_resources=memory=0
-# Tag every action no-local so Bazel will not schedule host execution.
-# Format: Regex=+key (no spaces around =)
-common --modify_execution_info=.*=+no-local
+# Prefer remote for remoting-friendly actions; allow runner-local for
+# SetupFlutterWorkspace and similar (must run next to the coordinator FS).
+common --spawn_strategy=remote,sandboxed,local
+common --strategy=remote,sandboxed,local
+common --genrule_strategy=remote,sandboxed,local
+common --remote_local_fallback=true
 
 common --jobs=100
 common --remote_timeout=3600
@@ -51,5 +47,4 @@ common --remote_download_minimal
 common --remote_cache_compression
 common --remote_cache_async
 
-# Keep --config=buildbuddy as an alias so CI / docs that pass it still work.
 common:buildbuddy --bes_backend=grpcs://remote.buildbuddy.io
