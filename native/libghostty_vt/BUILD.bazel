@@ -19,66 +19,17 @@ zig_library(
     import_name = "terminal_options",
 )
 
-# --- uucode (single module graph + generated tables) --------------------------
-# Ghostty wires config/storage/types as separate modules with ".zig" import names.
-# We mirror that with zig_library import_name.
-
-zig_library(
-    name = "uucode_types",
-    main = "@uucode//:src/types.zig",
-    import_name = "types.zig",
-)
-
-# config.zig and storage.zig import each other; ship both as srcs of one module
-# named config.zig, and expose storage as a re-export package for generate.
-zig_library(
-    name = "uucode_config_zig",
-    main = "@uucode//:src/config.zig",
-    srcs = [
-        "@uucode//:src/storage.zig",
-        "@uucode//:src/types.zig",
-        "@uucode//:src/fields.zig",
-        "@uucode//:src/components.zig",
-        "@uucode//:src/multi_slice.zig",
-        "@uucode//:src/quirks.zig",
-    ],
-    import_name = "config.zig",
-)
-
-zig_library(
-    name = "uucode_storage",
-    main = "@uucode//:src/storage.zig",
-    srcs = [
-        "@uucode//:src/config.zig",
-        "@uucode//:src/types.zig",
-        "@uucode//:src/fields.zig",
-        "@uucode//:src/components.zig",
-        "@uucode//:src/multi_slice.zig",
-        "@uucode//:src/quirks.zig",
-    ],
-    import_name = "storage.zig",
-)
-
-zig_library(
-    name = "uucode_build_config",
-    main = "@ghostty//:src/build/uucode_config.zig",
-    import_name = "build_config",
-    deps = [
-        ":uucode_config_zig",
-        ":uucode_storage",
-    ],
-)
+# --- uucode as one module (Zig 0.16: a file may only belong to one module) ---
+# generate.zig is patched to @import("build_config.zig"); Ghostty's uucode_config
+# is vendored as tools/build_config.zig in this package.
 
 zig_binary(
     name = "uucode_generate",
     main = "@uucode//:src/generate.zig",
-    srcs = ["@uucode//:zig_srcs"],
-    extra_srcs = ["@uucode//:ucd"],
-    deps = [
-        ":uucode_config_zig",
-        ":uucode_storage",
-        ":uucode_build_config",
+    srcs = ["@uucode//:zig_srcs"] + [
+        "tools/build_config.zig",
     ],
+    extra_srcs = ["@uucode//:ucd"],
 )
 
 # Codegen only: run generator with cwd = @uucode root (needs ucd/).
@@ -104,7 +55,6 @@ if [ -z "$$ROOT" ] || [ ! -d "$$ROOT/ucd" ]; then
 fi
 GEN=$(location :uucode_generate)
 OUT=$(location gen/uucode_tables.zig)
-# Absolute paths for run from uucode root.
 GEN_ABS=$$(cd $$(dirname "$$GEN") && pwd)/$$(basename "$$GEN")
 OUT_ABS=$$(cd $$(dirname "$$OUT") && pwd)/$$(basename "$$OUT")
 cd "$$ROOT"
@@ -112,28 +62,24 @@ cd "$$ROOT"
 """,
 )
 
+# tables module consumed by uucode root (import name "tables")
 zig_library(
     name = "uucode_tables",
     main = ":gen/uucode_tables.zig",
-    import_name = "tables",
-    deps = [
-        ":uucode_config_zig",
-        ":uucode_storage",
-        ":uucode_build_config",
+    srcs = ["@uucode//:zig_srcs"] + [
+        "tools/build_config.zig",
     ],
+    import_name = "tables",
 )
 
 zig_library(
     name = "uucode",
     main = "@uucode//:src/root.zig",
-    srcs = ["@uucode//:zig_srcs"],
-    import_name = "uucode",
-    deps = [
-        ":uucode_tables",
-        ":uucode_types",
-        ":uucode_config_zig",
-        ":uucode_storage",
+    srcs = ["@uucode//:zig_srcs"] + [
+        "tools/build_config.zig",
     ],
+    import_name = "uucode",
+    deps = [":uucode_tables"],
 )
 
 # --- Ghostty unicode table generators ----------------------------------------
