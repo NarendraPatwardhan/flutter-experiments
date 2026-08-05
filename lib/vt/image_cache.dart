@@ -141,16 +141,11 @@ void paintVtImages(
   ui.Canvas canvas,
   List<VtPaintImage> images,
 ) {
+  final paint = Paint()..filterQuality = FilterQuality.medium;
   for (final p in images) {
     final img = p.image;
     if (img is! ui.Image) continue;
-    paintImage(
-      canvas: canvas,
-      rect: p.dest,
-      image: img,
-      sourceRect: p.src,
-      fit: BoxFit.fill,
-      filterQuality: FilterQuality.medium,
-    );
+    // drawImageRect is stable on Flutter 3.24 (paintImage has no sourceRect).
+    canvas.drawImageRect(img, p.src, p.dest, paint);
   }
 }

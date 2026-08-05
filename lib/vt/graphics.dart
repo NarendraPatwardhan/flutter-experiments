@@ -121,10 +121,12 @@ NativeCallable<DecodePngNative>? _decodePngCallable;
 void installPngDecoderOnce(GhosttyVtNative native) {
   if (_pngDecoderInstalled) return;
 
+  // Bool-returning native callbacks require exceptionalReturn on Dart 3.
   _decodePngCallable = NativeCallable<DecodePngNative>.isolateLocal(
     (userdata, allocator, data, dataLen, out) {
       return _decodePngTrampoline(native, allocator, data, dataLen, out);
     },
+    exceptionalReturn: false,
   );
 
   // Value is the function pointer itself (see sys.h / c-vt-kitty-graphics).
