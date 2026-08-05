@@ -32,6 +32,9 @@ build --modify_execution_info=ZigBuildExe=+no-remote,ZigBuildLib=+no-remote,ZigB
 # Fresh zig cache dir per Bazel server start; avoids poisoned entries from bad -include runs.
 build --action_env=ZIG_GLOBAL_CACHE_DIR=/tmp/zig-cache-agentos-flutter
 build --action_env=ZIG_LOCAL_CACHE_DIR=/tmp/zig-cache-agentos-flutter
+# rules_zig shared cache (product Zig 0.16.0)
+build --repo_env=RULES_ZIG_CACHE_PREFIX_LINUX=/tmp/zig-cache
+build --repo_env=RULES_ZIG_CACHE_PREFIX=/tmp/zig-cache
 
 build --verbose_failures
 

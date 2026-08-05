@@ -1,0 +1,110 @@
+# libghostty-vt via rules_zig (Zig 0.16.0) — declared modules, not shell `zig build`.
+#
+# Graph:
+#   options (build_options, terminal_options)
+#   → unicode table generators (zig_binary) → generated zig modules
+#   → uucode module
+#   → zig_shared_library root = @ghostty//src/lib_vt.zig (C ABI exports)
+
+load("@rules_zig//zig:defs.bzl", "zig_binary", "zig_library", "zig_shared_library")
+
+package(default_visibility = ["//visibility:public"])
+
+# --- Compile-time option packages (Ghostty normally uses b.addOptions) --------
+
+zig_library(
+    name = "build_options",
+    main = "options/build_options.zig",
+    import_name = "build_options",
+)
+
+zig_library(
+    name = "terminal_options",
+    main = "options/terminal_options.zig",
+    import_name = "terminal_options",
+)
+
+# --- uucode (Ghostty dependency) ---------------------------------------------
+# Full uucode table generation matches Ghostty's SharedDeps; for lib-vt we
+# compile uucode with Ghostty's uucode_config. Tables are produced by Ghostty's
+# unicode generators which import uucode.
+
+zig_library(
+    name = "uucode",
+    main = "@uucode//:src/root.zig",
+    srcs = ["@uucode//:zig_srcs"],
+    import_name = "uucode",
+    # Ghostty injects tables via build; generators depend on this module.
+    # If root.zig requires tables import, generators supply runtime use.
+)
+
+# --- Unicode table generators (codegen actions; tools are zig_binary) --------
+
+zig_binary(
+    name = "props_unigen",
+    main = "@ghostty//:src/unicode/props_uucode.zig",
+    srcs = [
+        "@ghostty//:src/unicode/lut.zig",
+        "@ghostty//:src/unicode/props.zig",
+        "@ghostty//:src/unicode/props_uucode.zig",
+    ],
+    deps = [":uucode"],
+)
+
+zig_binary(
+    name = "symbols_unigen",
+    main = "@ghostty//:src/unicode/symbols_uucode.zig",
+    srcs = [
+        "@ghostty//:src/unicode/lut.zig",
+        "@ghostty//:src/unicode/symbols_uucode.zig",
+    ],
+    deps = [":uucode"],
+)
+
+# Run generators → generated Zig modules (standard Bazel codegen, not package build).
+genrule(
+    name = "gen_unicode_tables",
+    tools = [
+        ":props_unigen",
+        ":symbols_unigen",
+    ],
+    outs = [
+        "gen/unicode_tables.zig",
+        "gen/symbols_tables.zig",
+    ],
+    cmd = """
+set -euo pipefail
+$(location :props_unigen) > $(location gen/unicode_tables.zig)
+$(location :symbols_unigen) > $(location gen/symbols_tables.zig)
+""",
+)
+
+zig_library(
+    name = "unicode_tables",
+    main = ":gen/unicode_tables.zig",
+    import_name = "unicode_tables",
+)
+
+zig_library(
+    name = "symbols_tables",
+    main = ":gen/symbols_tables.zig",
+    import_name = "symbols_tables",
+)
+
+# --- libghostty-vt shared library (C ABI) ------------------------------------
+
+zig_shared_library(
+    name = "libghostty_vt",
+    main = "@ghostty//:src/lib_vt.zig",
+    srcs = ["@ghostty//:zig_srcs"],
+    extra_srcs = ["@ghostty//:headers"],
+    deps = [
+        ":build_options",
+        ":terminal_options",
+        ":uucode",
+        ":unicode_tables",
+        ":symbols_tables",
+    ],
+    # Full filename for Flutter dlopen (rules_zig uses this as the declared file name).
+    shared_lib_name = "libghostty-vt.so",
+)

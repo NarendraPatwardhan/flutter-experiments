@@ -22,24 +22,33 @@ alias(
     actual = "//native/agentos_flutter_host:agentos_flutter_host",
 )
 
-# Stage kernel + loom image + opt+stripped host .so.
+# libghostty-vt (rules_zig / Zig 0.16.0)
+alias(
+    name = "libghostty_vt",
+    actual = "//native/libghostty_vt:libghostty_vt",
+)
+
+# Stage kernel + loom image + opt+stripped host .so + libghostty-vt.
 genrule(
     name = "agentos_native_bundle",
     srcs = [
         ":agentos_kernel",
         ":agentos_loom",
         ":agentos_flutter_host",
+        ":libghostty_vt",
     ],
     outs = [
         "agentos_native/kernel.wasm",
         "agentos_native/loom.tar",
         "agentos_native/libagentos_flutter_host.so",
+        "agentos_native/libghostty-vt.so",
     ],
     cmd = """
 set -euo pipefail
 cp $(location :agentos_kernel) $(location agentos_native/kernel.wasm)
 cp $(location :agentos_loom) $(location agentos_native/loom.tar)
 cp $(location :agentos_flutter_host) $(location agentos_native/libagentos_flutter_host.so)
+cp $(location :libghostty_vt) $(location agentos_native/libghostty-vt.so)
 """,
 )
 
@@ -74,11 +83,13 @@ mkdir -p "$$WORKDIR/lib" "$$WORKDIR/data"
 for f in $(locations :agentos_native_bundle); do
   case "$$f" in
     *libagentos_flutter_host.so) cp -f "$$f" "$$WORKDIR/lib/" ;;
+    *libghostty-vt.so) cp -f "$$f" "$$WORKDIR/lib/" ;;
     *kernel.wasm) cp -f "$$f" "$$WORKDIR/data/" ;;
     *loom.tar) cp -f "$$f" "$$WORKDIR/data/" ;;
   esac
 done
 test -f "$$WORKDIR/lib/libagentos_flutter_host.so"
+test -f "$$WORKDIR/lib/libghostty-vt.so"
 test -f "$$WORKDIR/data/kernel.wasm"
 test -f "$$WORKDIR/data/loom.tar"
 tar -C "$$WORKDIR" -czf $(location linux_product.tar.gz) .

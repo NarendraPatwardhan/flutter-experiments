@@ -47,7 +47,7 @@ git_override(
 
 # hermetic_cc only materializes @zig_sdk when the **root** module uses the extension
 # (see hermetic_cc_toolchain toolchain/ext.bzl). AgentOS imports zig_sdk for
-# git-engine; root must instantiate the extension.
+# git-engine host C (zig cc). That is hermetic_cc's C toolchain, not product Zig.
 bazel_dep(name = "hermetic_cc_toolchain", version = "4.2.0")
 
 hermetic_cc = use_extension("@hermetic_cc_toolchain//toolchain:ext.bzl", "toolchains")
@@ -56,6 +56,45 @@ use_repo(hermetic_cc, "zig_sdk")
 register_toolchains(
     "@zig_sdk//toolchain/...",
     "@zig_sdk//libc_aware/toolchain/...",
+)
+
+# ---------------------------------------------------------------------------
+# Product Zig — single version 0.16.0 via rules_zig (libghostty-vt, etc.)
+# Do not add another product Zig version.
+# ---------------------------------------------------------------------------
+bazel_dep(name = "rules_zig", version = "0.16.0")
+
+zig = use_extension("@rules_zig//zig:extensions.bzl", "zig")
+zig.index(file = "//:zig_index.json")
+zig.toolchain(zig_version = "0.16.0")
+use_repo(zig, "zig_toolchains")
+
+register_toolchains("@rules_zig//zig/target:all")
+register_toolchains("@zig_toolchains//:all")
+
+# Ghostty source pin (minimum_zig_version 0.16.0). Built with rules_zig targets,
+# not shell genrule wrapping `zig build`.
+http_archive = use_repo_rule("@bazel_tools//tools/build_defs/repo:http.bzl", "http_archive")
+
+http_archive(
+    name = "ghostty",
+    build_file = "//third_party/ghostty:ghostty.BUILD",
+    sha256 = "f5002725736fdae2ad56d61137de4c87eca32355c0e17840a7fec9ccee6073d1",
+    strip_prefix = "ghostty-9e30f70f23418fecbdca1088673000417527c4e4",
+    urls = [
+        "https://github.com/ghostty-org/ghostty/archive/9e30f70f23418fecbdca1088673000417527c4e4.tar.gz",
+    ],
+)
+
+# uucode — Ghostty lib-vt Unicode dependency (same pin as Ghostty build.zig.zon).
+http_archive(
+    name = "uucode",
+    build_file = "//third_party/uucode:uucode.BUILD",
+    sha256 = "7e76fc7fab1e7ac728c52b35bbb3e5b8c639841abfc7fe1a4bcb13050594bc9e",
+    strip_prefix = "uucode-2826a37a4562284fdacd8fa029d49509cc9bffcd",
+    urls = [
+        "https://deps.files.ghostty.org/uucode-2826a37a4562284fdacd8fa029d49509cc9bffcd.tar.gz",
+    ],
 )
 
 # Rust host cdylib (product C ABI over @agent-os wasmtime host)
