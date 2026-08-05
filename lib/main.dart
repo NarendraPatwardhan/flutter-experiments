@@ -94,6 +94,8 @@ class _HomePageState extends State<HomePage> with SingleTickerProviderStateMixin
   void dispose() {
     _blink.dispose();
     _session.removeListener(_onSession);
+    // ProductSession.dispose drains/defers native free so an in-flight tick
+    // cannot use-after-free libghostty-vt (that corrupted GTK on close).
     _session.dispose();
     super.dispose();
   }

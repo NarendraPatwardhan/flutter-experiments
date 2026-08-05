@@ -38,8 +38,11 @@ class ProductSession extends ChangeNotifier {
   AgentOsVm? _vm;
   Timer? _loop;
   bool _ticking = false;
+  /// Completes when the current [_tickOnce] finishes (for orderly shutdown).
+  Completer<void>? _tickIdle;
   bool _closed = false;
   bool _started = false;
+  bool _nativeReleased = false;
   int _cellW = 8;
   int _cellH = 16;
   int _padL = 8;
@@ -100,6 +103,7 @@ class ProductSession extends ChangeNotifier {
     await disposeAsync(notify: false);
 
     _closed = false;
+    _nativeReleased = false;
     _busy = true;
     _statusLine = 'opening vt…';
     _frame = VtFrame.empty(cols: cols, rows: rows);
@@ -181,16 +185,19 @@ class ProductSession extends ChangeNotifier {
       final pending = _pendingInput.takeBytes();
       if (pending.isNotEmpty) {
         await vm.sendInput(pending);
+        if (_closed) return;
       }
 
       try {
         _lastTick = await vm.tickN(8);
       } catch (e) {
+        if (_closed) return;
         _lastError = 'tick: $e';
         _statusLine = _composeStatus(vt);
-        notifyListeners();
+        _safeNotify();
         return;
       }
+      if (_closed) return;
 
       if (_lastTick == AgentOsTickState.exited) {
         _loop?.cancel();
@@ -199,6 +206,7 @@ class ProductSession extends ChangeNotifier {
 
       try {
         final out = await vm.takeOutput(capacity: 128 * 1024);
+        if (_closed) return;
         if (out.isNotEmpty) {
           vt.writeGuest(out);
           _compress.onWrite(vt.native, vt.handle);
@@ -207,8 +215,9 @@ class ProductSession extends ChangeNotifier {
           _lastError = null;
         }
       } catch (e) {
-        _lastError = 'take_output: $e';
+        if (!_closed) _lastError = 'take_output: $e';
       }
+      if (_closed) return;
 
       // WRITE_PTY (query answers) → guest input path.
       final ptyChunks = vt.takePtyOutput();
@@ -221,14 +230,16 @@ class ProductSession extends ChangeNotifier {
         if (pty.isNotEmpty) {
           try {
             await vm.sendInput(pty);
+            if (_closed) return;
             if (_lastError != null && _lastError!.startsWith('pty reply:')) {
               _lastError = null;
             }
           } catch (e) {
-            _lastError = 'pty reply: $e';
+            if (!_closed) _lastError = 'pty reply: $e';
           }
         }
       }
+      if (_closed) return;
 
       var chromeDirty = false;
       for (final ev in vt.takeChromeEvents()) {
@@ -243,8 +254,9 @@ class ProductSession extends ChangeNotifier {
             try {
               await _applyClipboardWrite(parts);
             } catch (e) {
-              _lastError = 'clipboard: $e';
+              if (!_closed) _lastError = 'clipboard: $e';
             }
+            if (_closed) return;
           case VtChromeProgress(:final state, :final progress):
             if (state == VtProgressState.remove) {
               _progress = null;
@@ -256,6 +268,7 @@ class ProductSession extends ChangeNotifier {
                 title.isEmpty ? body : (body.isEmpty ? title : '$title — $body');
         }
       }
+      if (_closed) return;
       if (chromeDirty) {
         _title = vt.title;
         _pwd = vt.pwd;
@@ -263,22 +276,34 @@ class ProductSession extends ChangeNotifier {
 
       try {
         final st = await vm.status();
+        if (_closed) return;
         _atPrompt = st.atPrompt;
         if (_lastError != null && _lastError!.startsWith('status:')) {
           _lastError = null;
         }
       } catch (e) {
-        // Keep status failures visible until the next successful status poll.
-        _lastError = 'status: $e';
+        if (!_closed) _lastError = 'status: $e';
       }
+      if (_closed) return;
 
       _frame = vt.snapshot(previous: _frame);
       await _syncImages(vt);
+      if (_closed) return;
       _statusLine = _composeStatus(vt);
-      notifyListeners();
+      _safeNotify();
     } finally {
       _ticking = false;
+      final waiter = _tickIdle;
+      if (waiter != null && !waiter.isCompleted) {
+        waiter.complete();
+      }
+      _tickIdle = null;
     }
+  }
+
+  void _safeNotify() {
+    if (_closed) return;
+    notifyListeners();
   }
 
   /// Apply an OSC 52 / OSC 1337 clipboard write to the platform clipboard.
@@ -374,12 +399,14 @@ class ProductSession extends ChangeNotifier {
   }
 
   void _flashBell() {
+    if (_closed) return;
     _bellFlash = true;
-    notifyListeners();
+    _safeNotify();
     _bellTimer?.cancel();
     _bellTimer = Timer(const Duration(milliseconds: 180), () {
+      if (_closed) return;
       _bellFlash = false;
-      notifyListeners();
+      _safeNotify();
     });
   }
 
@@ -590,36 +617,78 @@ class ProductSession extends ChangeNotifier {
   }
 
   /// Close VM + VT + encoder and stop the loop.
+  ///
+  /// Waits for any in-flight tick so native handles are never freed under a
+  /// concurrent [vt_write] / snapshot (that race corrupted the heap and
+  /// surfaced as GTK CRITICAL + SIGSEGV on window close).
   Future<void> disposeAsync({bool notify = true}) async {
+    _closed = true;
     _loop?.cancel();
     _loop = null;
     _bellTimer?.cancel();
     _bellTimer = null;
     _compress.dispose();
-    _imageCache.dispose();
-    _started = false;
     _pendingInput.clear();
+    _started = false;
+    _busy = false;
+
+    await _waitForTickIdle();
+    final tears = _releaseNative();
+    _imageCache.dispose();
     _imageLayers = const [];
 
+    if (tears.isNotEmpty) {
+      _lastError = 'dispose: ${tears.join('; ')}';
+    }
+    if (notify) {
+      _statusLine = tears.isEmpty ? 'stopped' : 'error: $_lastError';
+      // ChangeNotifier may already be disposed on widget teardown — guard.
+      try {
+        notifyListeners();
+      } catch (_) {}
+    }
+  }
+
+  Future<void> _waitForTickIdle() async {
+    if (!_ticking) return;
+    final existing = _tickIdle;
+    if (existing != null) {
+      await existing.future.timeout(
+        const Duration(milliseconds: 500),
+        onTimeout: () {},
+      );
+      return;
+    }
+    final c = Completer<void>();
+    _tickIdle = c;
+    if (!_ticking) {
+      if (!c.isCompleted) c.complete();
+      _tickIdle = null;
+      return;
+    }
+    await c.future.timeout(
+      const Duration(milliseconds: 500),
+      onTimeout: () {},
+    );
+  }
+
+  /// Drop Dart refs and free native hosts. Idempotent.
+  List<String> _releaseNative() {
+    if (_nativeReleased) return const [];
+    _nativeReleased = true;
+
     final vm = _vm;
-    _vm = null;
     final enc = _encoder;
-    _encoder = null;
     final sel = _selection;
-    _selection = null;
     final vt = _vt;
+    _vm = null;
+    _encoder = null;
+    _selection = null;
     _vt = null;
 
-    // Tear-down is best-effort: each resource is released independently so one
-    // failure cannot leave the others open. Errors are recorded, not swallowed.
     final tears = <String>[];
-    if (vm != null) {
-      try {
-        await vm.close();
-      } catch (e) {
-        tears.add('vm: $e');
-      }
-    }
+    // Clear effects before closing callables / terminal so lib-vt never
+    // re-enters Dart during teardown.
     try {
       if (vt != null) {
         sel?.close(vt.handle);
@@ -639,15 +708,15 @@ class ProductSession extends ChangeNotifier {
     } catch (e) {
       tears.add('vt: $e');
     }
-
-    _busy = false;
-    if (tears.isNotEmpty) {
-      _lastError = 'dispose: ${tears.join('; ')}';
+    if (vm != null) {
+      // Fire-and-forget: isolate close can block; process exit reclaims.
+      unawaited(() async {
+        try {
+          await vm.close();
+        } catch (_) {}
+      }());
     }
-    if (notify && !_closed) {
-      _statusLine = tears.isEmpty ? 'stopped' : 'error: $_lastError';
-      notifyListeners();
-    }
+    return tears;
   }
 
   @override
@@ -658,30 +727,24 @@ class ProductSession extends ChangeNotifier {
     _bellTimer?.cancel();
     _bellTimer = null;
     _compress.dispose();
-    _imageCache.dispose();
-    // Sync dispose path: release native handles; ignore secondary failures
-    // (widget tree is already tearing down; no status surface remains).
-    try {
-      _encoder?.close();
-    } catch (_) {}
-    _encoder = null;
-    try {
-      final t = _vt;
-      if (t != null) {
-        _selection?.close(t.handle);
-      } else {
-        _selection?.close();
-      }
-    } catch (_) {}
-    _selection = null;
-    try {
-      _vt?.close();
-    } catch (_) {}
-    _vt = null;
-    final vm = _vm;
-    _vm = null;
-    if (vm != null) {
-      unawaited(vm.close());
+    // If a tick is in flight, do **not** free native under it — schedule
+    // release for when the tick completes (or after a short grace). Freeing
+    // libghostty-vt / AgentOS mid-await corrupted GObject memory and crashed
+    // GTK on window close.
+    if (_ticking) {
+      final c = _tickIdle ?? Completer<void>();
+      _tickIdle = c;
+      unawaited(() async {
+        await c.future.timeout(
+          const Duration(milliseconds: 500),
+          onTimeout: () {},
+        );
+        _releaseNative();
+        _imageCache.dispose();
+      }());
+    } else {
+      _releaseNative();
+      _imageCache.dispose();
     }
     super.dispose();
   }

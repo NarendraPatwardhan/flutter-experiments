@@ -10,15 +10,38 @@
 struct _MyApplication {
   GtkApplication parent_instance;
   char** dart_entrypoint_arguments;
+  GtkWindow* window;
 };
 
 G_DEFINE_TYPE(MyApplication, my_application, GTK_TYPE_APPLICATION)
 
+// Window is going away: drop our weak hold and quit the app cleanly so
+// GtkApplication does not later gtk_window_set_application() on a freed
+// window (GLib-CRITICAL + SIGSEGV on some WMs, including Hyprland).
+static void my_application_on_window_destroy(GtkWidget* widget,
+                                            gpointer user_data) {
+  MyApplication* self = MY_APPLICATION(user_data);
+  if (self->window == GTK_WINDOW(widget)) {
+    self->window = nullptr;
+  }
+  g_application_quit(G_APPLICATION(self));
+}
+
 // Implements GApplication::activate.
 static void my_application_activate(GApplication* application) {
   MyApplication* self = MY_APPLICATION(application);
+
+  // Single main window: if activate fires again, present existing.
+  if (self->window != nullptr) {
+    gtk_window_present(self->window);
+    return;
+  }
+
   GtkWindow* window =
       GTK_WINDOW(gtk_application_window_new(GTK_APPLICATION(application)));
+  self->window = window;
+  g_signal_connect(window, "destroy",
+                   G_CALLBACK(my_application_on_window_destroy), self);
 
   // Prefer a plain window title so the compositor/WM owns decorations.
   // Only use a client-side header bar under GNOME.
@@ -47,9 +70,6 @@ static void my_application_activate(GApplication* application) {
   }
 
   gtk_window_set_default_size(window, 960, 640);
-  // Show immediately: FlView "first-frame" signal is not available in Flutter
-  // 3.24 (newer templates use it; connecting it here only GLib-CRITICs).
-  gtk_widget_show(GTK_WIDGET(window));
 
   g_autoptr(FlDartProject) project = fl_dart_project_new();
   fl_dart_project_set_dart_entrypoint_arguments(
@@ -58,6 +78,9 @@ static void my_application_activate(GApplication* application) {
   FlView* view = fl_view_new(project);
   gtk_widget_show(GTK_WIDGET(view));
   gtk_container_add(GTK_CONTAINER(window), GTK_WIDGET(view));
+
+  // Show after the view is parented so destroy order is window → view → engine.
+  gtk_widget_show(GTK_WIDGET(window));
 
   fl_register_plugins(FL_PLUGIN_REGISTRY(view));
 
@@ -106,6 +129,8 @@ static void my_application_shutdown(GApplication* application) {
 // Implements GObject::dispose.
 static void my_application_dispose(GObject* object) {
   MyApplication* self = MY_APPLICATION(object);
+  // Window is owned by GTK; we only hold a non-owning pointer.
+  self->window = nullptr;
   g_clear_pointer(&self->dart_entrypoint_arguments, g_strfreev);
   G_OBJECT_CLASS(my_application_parent_class)->dispose(object);
 }
@@ -119,7 +144,9 @@ static void my_application_class_init(MyApplicationClass* klass) {
   G_OBJECT_CLASS(klass)->dispose = my_application_dispose;
 }
 
-static void my_application_init(MyApplication* self) {}
+static void my_application_init(MyApplication* self) {
+  self->window = nullptr;
+}
 
 MyApplication* my_application_new() {
   // Set the program name to the application ID, which helps various systems
