@@ -5,18 +5,6 @@ use std::sync::{Arc, Mutex, MutexGuard, OnceLock};
 
 use host::KernelHost;
 
-use crate::error::{clear_error, set_error};
-
-pub struct SharedSink(pub Arc<Mutex<Vec<u8>>>);
-
-impl host::StreamSink for SharedSink {
-    fn write(&mut self, bytes: &[u8]) {
-        if let Ok(mut buf) = self.0.lock() {
-            buf.extend_from_slice(bytes);
-        }
-    }
-}
-
 /// Relay queue + slots (translation of NIF RelayState). Extended by relay module.
 #[derive(Default)]
 pub struct RelayState {

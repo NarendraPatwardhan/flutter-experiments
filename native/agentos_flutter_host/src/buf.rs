@@ -15,32 +15,21 @@ pub struct AosBytes {
     pub len: usize,
 }
 
-/// Copy `src` into caller buffer. Sets `len` to bytes written (min of src and cap).
-/// Returns 0. If you need required size semantics, use `fill_buf_required`.
+/// Copy `src` into caller buffer.
+///
+/// On success: `len = src.len()`, returns 0.
+/// If the buffer is too small (or null ptr with non-empty src): sets `len` to the
+/// required size and returns -1 so the caller can reallocate.
 pub unsafe fn fill_buf(out: *mut AosBuf, src: &[u8]) -> i32 {
     if out.is_null() {
         return -1;
     }
     let b = &mut *out;
-    let n = src.len().min(b.cap);
-    b.len = n;
-    if n > 0 && !b.ptr.is_null() {
-        std::ptr::copy_nonoverlapping(src.as_ptr(), b.ptr, n);
-    }
-    0
-}
-
-/// Sets len to src.len(). If cap < src.len(), copies nothing useful (len = required) and returns -1.
-pub unsafe fn fill_buf_required(out: *mut AosBuf, src: &[u8]) -> i32 {
-    if out.is_null() {
-        return -1;
-    }
-    let b = &mut *out;
     b.len = src.len();
+    if src.is_empty() {
+        return 0;
+    }
     if b.cap < src.len() || b.ptr.is_null() {
-        if src.is_empty() {
-            return 0;
-        }
         return -1;
     }
     std::ptr::copy_nonoverlapping(src.as_ptr(), b.ptr, src.len());

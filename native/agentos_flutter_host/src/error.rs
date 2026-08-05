@@ -20,10 +20,6 @@ pub fn clear_error() {
     LAST_ERROR.with(|e| e.borrow_mut().clear());
 }
 
-pub fn error_message() -> String {
-    LAST_ERROR.with(|e| e.borrow().clone())
-}
-
 #[no_mangle]
 pub extern "C" fn aos_api_version() -> i32 {
     1
