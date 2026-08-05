@@ -14,6 +14,7 @@ import '../vt/format.dart';
 import '../vt/frame.dart';
 import '../vt/graphics.dart';
 import '../vt/image_cache.dart';
+import '../vt/keys.dart' show kKeyUNIDENTIFIED;
 import '../vt/selection.dart';
 import '../vt/snapshot.dart';
 import '../vt/terminal.dart';
@@ -119,13 +120,9 @@ class ProductSession extends ChangeNotifier {
       _encoder = encoder;
       _cellW = cellW;
       _cellH = cellH;
-      try {
-        _selection = VtSelectionController.open(vt.native);
-      } catch (_) {
-        _selection = null;
-      }
+      _selection = VtSelectionController.open(vt.native);
 
-      // Short banner via VT only — not exec spam.
+      // Banner is VT-only (not AgentOS exec); proves style path immediately.
       vt.writeText(
         '\x1b[1;32magentos\x1b[0m · flutter · live session\r\n'
         '\x1b[90mgrid ${vt.cols}×${vt.rows}  '
@@ -158,12 +155,17 @@ class ProductSession extends ChangeNotifier {
       _lastError = e.toString();
       _statusLine = 'error: $e';
       _busy = false;
-      try {
-        _vt?.writeText('\r\n\x1b[1;31merror: $e\x1b[0m\r\n');
-        if (_vt != null) {
-          _frame = _vt!.snapshot(previous: _frame);
+      // Best-effort: paint the failure into the terminal if VT opened.
+      final vt = _vt;
+      if (vt != null) {
+        try {
+          vt.writeText('\r\n\x1b[1;31merror: $e\x1b[0m\r\n');
+          _frame = vt.snapshot(previous: _frame);
+        } catch (paintErr) {
+          _lastError = '$_lastError; paint: $paintErr';
+          _statusLine = 'error: $_lastError';
         }
-      } catch (_) {}
+      }
       notifyListeners();
       rethrow;
     }
@@ -184,24 +186,31 @@ class ProductSession extends ChangeNotifier {
       try {
         _lastTick = await vm.tickN(8);
       } catch (e) {
-        _lastError = e.toString();
-        _statusLine = 'tick error: $e';
+        _lastError = 'tick: $e';
+        _statusLine = _composeStatus(vt);
         notifyListeners();
         return;
       }
 
-      Uint8List out = Uint8List(0);
-      try {
-        out = await vm.takeOutput(capacity: 128 * 1024);
-      } catch (e) {
-        _lastError = e.toString();
-      }
-      if (out.isNotEmpty) {
-        vt.writeGuest(out);
-        _compress.onWrite(vt.native, vt.handle);
+      if (_lastTick == AgentOsTickState.exited) {
+        _loop?.cancel();
+        _loop = null;
       }
 
-      // WRITE_PTY → guest.
+      try {
+        final out = await vm.takeOutput(capacity: 128 * 1024);
+        if (out.isNotEmpty) {
+          vt.writeGuest(out);
+          _compress.onWrite(vt.native, vt.handle);
+        }
+        if (_lastError != null && _lastError!.startsWith('take_output:')) {
+          _lastError = null;
+        }
+      } catch (e) {
+        _lastError = 'take_output: $e';
+      }
+
+      // WRITE_PTY (query answers) → guest input path.
       final ptyChunks = vt.takePtyOutput();
       if (ptyChunks.isNotEmpty) {
         final b = BytesBuilder(copy: false);
@@ -210,7 +219,14 @@ class ProductSession extends ChangeNotifier {
         }
         final pty = b.takeBytes();
         if (pty.isNotEmpty) {
-          await vm.sendInput(pty);
+          try {
+            await vm.sendInput(pty);
+            if (_lastError != null && _lastError!.startsWith('pty reply:')) {
+              _lastError = null;
+            }
+          } catch (e) {
+            _lastError = 'pty reply: $e';
+          }
         }
       }
 
@@ -224,26 +240,16 @@ class ProductSession extends ChangeNotifier {
           case VtChromePwdChanged():
             break;
           case VtChromeClipboardWrite(:final parts):
-            for (final p in parts) {
-              if (p.data.isEmpty) continue;
-              final mime = p.mime.toLowerCase();
-              if (mime.isEmpty ||
-                  mime.contains('text') ||
-                  mime == 'text/plain') {
-                try {
-                  unawaited(Clipboard.setData(
-                    ClipboardData(
-                      text: utf8.decode(p.data, allowMalformed: true),
-                    ),
-                  ));
-                } catch (_) {}
-                break;
-              }
+            try {
+              await _applyClipboardWrite(parts);
+            } catch (e) {
+              _lastError = 'clipboard: $e';
             }
           case VtChromeProgress(:final state, :final progress):
-            _progress = VtChromeProgress(state: state, progress: progress);
             if (state == VtProgressState.remove) {
               _progress = null;
+            } else {
+              _progress = VtChromeProgress(state: state, progress: progress);
             }
           case VtChromeNotification(:final title, :final body):
             _lastNotification =
@@ -251,16 +257,20 @@ class ProductSession extends ChangeNotifier {
         }
       }
       if (chromeDirty) {
-        try {
-          _title = vt.title;
-          _pwd = vt.pwd;
-        } catch (_) {}
+        _title = vt.title;
+        _pwd = vt.pwd;
       }
 
       try {
         final st = await vm.status();
         _atPrompt = st.atPrompt;
-      } catch (_) {}
+        if (_lastError != null && _lastError!.startsWith('status:')) {
+          _lastError = null;
+        }
+      } catch (e) {
+        // Keep status failures visible until the next successful status poll.
+        _lastError = 'status: $e';
+      }
 
       _frame = vt.snapshot(previous: _frame);
       await _syncImages(vt);
@@ -269,6 +279,38 @@ class ProductSession extends ChangeNotifier {
     } finally {
       _ticking = false;
     }
+  }
+
+  /// Apply an OSC 52 / OSC 1337 clipboard write to the platform clipboard.
+  ///
+  /// Empty [parts] clears the text clipboard (Ghostty semantics). Prefer
+  /// text/plain; fall back to any empty-or-text MIME.
+  Future<void> _applyClipboardWrite(
+    List<({String mime, List<int> data})> parts,
+  ) async {
+    if (parts.isEmpty) {
+      await Clipboard.setData(const ClipboardData(text: ''));
+      return;
+    }
+    ({String mime, List<int> data})? preferred;
+    for (final p in parts) {
+      final mime = p.mime.toLowerCase();
+      if (mime.isEmpty || mime == 'text/plain' || mime.contains('text')) {
+        preferred = p;
+        if (mime == 'text/plain' || mime.isEmpty) break;
+      }
+    }
+    if (preferred == null) {
+      // Non-text only (image/…): unsupported on this host path.
+      _lastError = 'clipboard: unsupported MIME '
+          '(${parts.map((p) => p.mime).join(', ')})';
+      return;
+    }
+    await Clipboard.setData(
+      ClipboardData(
+        text: utf8.decode(preferred.data, allowMalformed: true),
+      ),
+    );
   }
 
   Future<void> _syncImages(VtTerminal vt) async {
@@ -281,8 +323,11 @@ class ProductSession extends ChangeNotifier {
         cellW: _cellW.toDouble(),
         cellH: _cellH.toDouble(),
       );
-    } catch (_) {
-      // Graphics optional at runtime if build disabled them.
+      if (_lastError != null && _lastError!.startsWith('graphics:')) {
+        _lastError = null;
+      }
+    } catch (e) {
+      _lastError = 'graphics: $e';
     }
   }
 
@@ -343,7 +388,9 @@ class ProductSession extends ChangeNotifier {
     _pendingInput.add(data);
   }
 
-  /// Map Flutter [KeyEvent] → terminal bytes → AgentOS send_input.
+  /// Map Flutter [KeyEvent] → Ghostty encoder → AgentOS send_input.
+  ///
+  /// Does **not** hand-roll CSI. Unmapped keys use [kKeyUNIDENTIFIED] with UTF-8.
   Future<void> onKey(KeyEvent event) async {
     if (_closed || _vt == null || _vm == null || _encoder == null) return;
 
@@ -358,51 +405,34 @@ class ProductSession extends ChangeNotifier {
             : kKeyActionRelease;
 
     final mods = VtEncoder.modsFromHardware();
-    final keyCode = VtEncoder.logicalKeyToGhostty(event.logicalKey);
+    final mapped = VtEncoder.logicalKeyToGhostty(event.logicalKey);
     final utf8Text = isDown ? event.character : null;
+    final ghosttyKey = mapped ?? kKeyUNIDENTIFIED;
+
+    // Bare unidentified with no text produces nothing useful — skip.
+    if (mapped == null &&
+        (utf8Text == null || utf8Text.isEmpty) &&
+        isDown) {
+      return;
+    }
 
     try {
-      if (keyCode != null) {
-        final bytes = _encoder!.encodeKey(
-          terminal: _vt!.handle,
-          ghosttyKey: keyCode,
-          mods: mods,
-          action: action,
-          utf8: utf8Text,
-        );
-        if (bytes.isNotEmpty) {
-          _enqueueInput(bytes);
-          return;
-        }
+      final bytes = _encoder!.encodeKey(
+        terminal: _vt!.handle,
+        ghosttyKey: ghosttyKey,
+        mods: mods,
+        action: action,
+        utf8: utf8Text,
+      );
+      // Empty is normal (e.g. unmodified Shift alone).
+      if (bytes.isNotEmpty) _enqueueInput(bytes);
+      if (_lastError != null && _lastError!.startsWith('key ')) {
+        _lastError = null;
       }
-    } catch (_) {
-      // Fall through to temporary fallback encoder.
-    }
-
-    // Fallback: enter → \r; backspace/tab/esc; printable UTF-8 only.
-    if (!isDown) return;
-    if (event.logicalKey == LogicalKeyboardKey.enter ||
-        event.logicalKey == LogicalKeyboardKey.numpadEnter) {
-      _enqueueInput(Uint8List.fromList(const [0x0d]));
-      return;
-    }
-    if (event.logicalKey == LogicalKeyboardKey.backspace) {
-      _enqueueInput(Uint8List.fromList(const [0x7f]));
-      return;
-    }
-    if (event.logicalKey == LogicalKeyboardKey.tab) {
-      _enqueueInput(Uint8List.fromList(const [0x09]));
-      return;
-    }
-    if (event.logicalKey == LogicalKeyboardKey.escape) {
-      _enqueueInput(Uint8List.fromList(const [0x1b]));
-      return;
-    }
-    final ch = event.character;
-    if (ch != null && ch.isNotEmpty) {
-      if (ch.codeUnitAt(0) >= 0x20 || ch == '\n' || ch == '\r' || ch == '\t') {
-        _enqueueInput(Uint8List.fromList(utf8.encode(ch)));
-      }
+    } catch (e) {
+      _lastError = 'key encode: $e';
+      _statusLine = _composeStatus(_vt!);
+      notifyListeners();
     }
   }
 
@@ -411,20 +441,35 @@ class ProductSession extends ChangeNotifier {
     try {
       final bytes = _encoder!.encodeFocus(gained: gained);
       if (bytes.isNotEmpty) _enqueueInput(bytes);
-    } catch (_) {}
+      if (_lastError != null && _lastError!.startsWith('focus ')) {
+        _lastError = null;
+        _statusLine = _composeStatus(_vt!);
+        notifyListeners();
+      }
+    } catch (e) {
+      _lastError = 'focus encode: $e';
+      _statusLine = _composeStatus(_vt!);
+      notifyListeners();
+    }
   }
 
   Future<void> onPaste(String text) async {
     if (_closed || _vt == null || _vm == null || _encoder == null) return;
     if (text.isEmpty) return;
     try {
+      // pasteEncode strips unsafe control bytes; always use it.
       final bytes = _encoder!.encodePaste(text, bracketed: true);
-      if (bytes.isNotEmpty) {
-        _enqueueInput(bytes);
-        return;
+      if (bytes.isNotEmpty) _enqueueInput(bytes);
+      if (_lastError != null && _lastError!.startsWith('paste ')) {
+        _lastError = null;
+        _statusLine = _composeStatus(_vt!);
+        notifyListeners();
       }
-    } catch (_) {}
-    _enqueueInput(Uint8List.fromList(utf8.encode(text)));
+    } catch (e) {
+      _lastError = 'paste encode: $e';
+      _statusLine = _composeStatus(_vt!);
+      notifyListeners();
+    }
   }
 
   /// Surface pixel pointer → selection gesture (cell space).
@@ -460,15 +505,20 @@ class ProductSession extends ChangeNotifier {
         _frame = _vt!.snapshot(previous: _frame);
         notifyListeners();
       }
-    } catch (_) {}
+    } catch (e) {
+      _lastError = 'selection: $e';
+      notifyListeners();
+    }
   }
 
-  /// Copy current selection as plain text (empty if none).
+  /// Copy current selection as plain text (null if none / error).
   Future<String?> copySelection() async {
     if (_closed || _vt == null) return null;
     try {
       return await copySelectionText(_vt!.native, _vt!.handle);
-    } catch (_) {
+    } catch (e) {
+      _lastError = 'copy: $e';
+      notifyListeners();
       return null;
     }
   }
@@ -483,44 +533,60 @@ class ProductSession extends ChangeNotifier {
       _frame = _vt!.snapshot(previous: _frame);
       await _syncImages(_vt!);
       notifyListeners();
-    } catch (_) {}
+    } catch (e) {
+      _lastError = 'scroll: $e';
+      notifyListeners();
+    }
   }
 
-  Future<void> resize(int cols, int rows, int cellW, int cellH) async {
+  Future<void> resize(
+    int cols,
+    int rows,
+    int cellW,
+    int cellH, {
+    int? padL,
+    int? padT,
+  }) async {
     if (_closed || _vt == null) return;
     if (cols < 1 || rows < 1) return;
     final vt = _vt!;
     _cellW = cellW;
     _cellH = cellH;
+    if (padL != null) _padL = padL;
+    if (padT != null) _padT = padT;
     try {
       vt.resize(cols, rows, cellW: cellW, cellH: cellH);
       _frame = vt.snapshot(previous: _frame);
       await _syncImages(vt);
       _statusLine = _composeStatus(vt);
       notifyListeners();
-    } catch (_) {}
+    } catch (e) {
+      _lastError = 'resize: $e';
+      _statusLine = _composeStatus(vt);
+      notifyListeners();
+    }
   }
 
   /// Debug: encode full terminal snapshot blob.
-  Uint8List? debugSnapshotEncode() {
+  ///
+  /// Throws on encode failure so callers can surface the error.
+  Uint8List debugSnapshotEncode() {
     final vt = _vt;
-    if (vt == null || _closed) return null;
-    try {
-      return snapshotEncode(vt.native, vt.handle);
-    } catch (_) {
-      return null;
+    if (vt == null || _closed) {
+      throw StateError('session not open');
     }
+    return snapshotEncode(vt.native, vt.handle);
   }
 
   /// Debug: format active screen as plain / vt / html.
-  String? debugFormat({VtFormatKind format = VtFormatKind.plain}) {
+  ///
+  /// Throws on format failure so callers can surface the error.
+  String debugFormat({VtFormatKind format = VtFormatKind.plain}) {
     final vt = _vt;
-    if (vt == null || _closed) return null;
-    try {
-      return formatTerminal(vt.native, vt.handle, format: format);
-    } catch (_) {
-      return null;
+    if (vt == null || _closed) {
+      throw StateError('session not open');
     }
+    return formatTerminal(vt.native, vt.handle, format: format);
   }
 
   /// Close VM + VT + encoder and stop the loop.
@@ -544,10 +610,15 @@ class ProductSession extends ChangeNotifier {
     final vt = _vt;
     _vt = null;
 
+    // Tear-down is best-effort: each resource is released independently so one
+    // failure cannot leave the others open. Errors are recorded, not swallowed.
+    final tears = <String>[];
     if (vm != null) {
       try {
         await vm.close();
-      } catch (_) {}
+      } catch (e) {
+        tears.add('vm: $e');
+      }
     }
     try {
       if (vt != null) {
@@ -555,17 +626,26 @@ class ProductSession extends ChangeNotifier {
       } else {
         sel?.close();
       }
-    } catch (_) {}
+    } catch (e) {
+      tears.add('selection: $e');
+    }
     try {
       enc?.close();
-    } catch (_) {}
+    } catch (e) {
+      tears.add('encoder: $e');
+    }
     try {
       vt?.close();
-    } catch (_) {}
+    } catch (e) {
+      tears.add('vt: $e');
+    }
 
     _busy = false;
+    if (tears.isNotEmpty) {
+      _lastError = 'dispose: ${tears.join('; ')}';
+    }
     if (notify && !_closed) {
-      _statusLine = 'stopped';
+      _statusLine = tears.isEmpty ? 'stopped' : 'error: $_lastError';
       notifyListeners();
     }
   }
@@ -579,6 +659,8 @@ class ProductSession extends ChangeNotifier {
     _bellTimer = null;
     _compress.dispose();
     _imageCache.dispose();
+    // Sync dispose path: release native handles; ignore secondary failures
+    // (widget tree is already tearing down; no status surface remains).
     try {
       _encoder?.close();
     } catch (_) {}

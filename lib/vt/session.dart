@@ -104,6 +104,8 @@ class GhosttyVtSession {
     final bg = mallocBytes<GhosttyColorRgb>(1, sizeOf<GhosttyColorRgb>());
     final fg = mallocBytes<GhosttyColorRgb>(1, sizeOf<GhosttyColorRgb>());
     final cur = mallocBytes<GhosttyColorRgb>(1, sizeOf<GhosttyColorRgb>());
+    final palette =
+        mallocBytes<GhosttyColorRgb>(256, sizeOf<GhosttyColorRgb>());
     try {
       bg.ref
         ..r = kVtDefaultBg.red
@@ -117,25 +119,50 @@ class GhosttyVtSession {
         ..r = kVtDefaultCursor.red
         ..g = kVtDefaultCursor.green
         ..b = kVtDefaultCursor.blue;
-      _native.terminalSet(
-        _terminal,
-        kTerminalOptColorBackground,
-        bg.cast(),
+      void check(int rc, String what) {
+        if (rc != kGhosttySuccess) {
+          throw StateError('ghostty_terminal_set($what) failed: $rc');
+        }
+      }
+
+      check(
+        _native.terminalSet(
+          _terminal,
+          kTerminalOptColorBackground,
+          bg.cast(),
+        ),
+        'COLOR_BACKGROUND',
       );
-      _native.terminalSet(
-        _terminal,
-        kTerminalOptColorForeground,
-        fg.cast(),
+      check(
+        _native.terminalSet(
+          _terminal,
+          kTerminalOptColorForeground,
+          fg.cast(),
+        ),
+        'COLOR_FOREGROUND',
       );
-      _native.terminalSet(
-        _terminal,
-        kTerminalOptColorCursor,
-        cur.cast(),
+      check(
+        _native.terminalSet(
+          _terminal,
+          kTerminalOptColorCursor,
+          cur.cast(),
+        ),
+        'COLOR_CURSOR',
+      );
+      _native.colorPaletteDefault(palette);
+      check(
+        _native.terminalSet(
+          _terminal,
+          kTerminalOptColorPalette,
+          palette.cast(),
+        ),
+        'COLOR_PALETTE',
       );
     } finally {
       freePtr(bg);
       freePtr(fg);
       freePtr(cur);
+      freePtr(palette);
     }
   }
 

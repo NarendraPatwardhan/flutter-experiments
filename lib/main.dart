@@ -65,6 +65,8 @@ class _HomePageState extends State<HomePage> with SingleTickerProviderStateMixin
   int _layoutCols = 80;
   int _layoutRows = 24;
   bool _starting = false;
+  /// Host-side boot diagnostic when [ProductSession] never starts.
+  String? _bootError;
 
   @override
   void initState() {
@@ -158,15 +160,20 @@ class _HomePageState extends State<HomePage> with SingleTickerProviderStateMixin
   Future<void> _startSession() async {
     if (_starting) return;
     _starting = true;
+    _bootError = null;
     try {
       final assets = _locateAssets();
       if (assets == null) {
-        // Surface missing assets via a one-shot banner path if session never starts.
-        setState(() {});
+        _bootError = 'missing libagentos_flutter_host.so or kernel.wasm '
+            '(expected beside the binary under lib/ and data/)';
         return;
       }
-      if (assets.vtLib == null || assets.image == null) {
-        setState(() {});
+      if (assets.vtLib == null) {
+        _bootError = 'missing libghostty-vt.so (expected under lib/ next to host)';
+        return;
+      }
+      if (assets.image == null) {
+        _bootError = 'missing guest image (loom.tar / posix.tar under data/)';
         return;
       }
       await _session.start(
@@ -179,8 +186,9 @@ class _HomePageState extends State<HomePage> with SingleTickerProviderStateMixin
         cellW: _metrics.cellWidth.round(),
         cellH: _metrics.cellHeight.round(),
       );
-    } catch (_) {
-      // ProductSession already records the error on statusLine.
+    } catch (e) {
+      // ProductSession records detail on statusLine; keep a local fallback.
+      _bootError ??= 'start failed: $e';
     } finally {
       _starting = false;
       if (mounted) setState(() {});
@@ -209,6 +217,8 @@ class _HomePageState extends State<HomePage> with SingleTickerProviderStateMixin
         fit.rows,
         _metrics.cellWidth.round(),
         _metrics.cellHeight.round(),
+        padL: fit.padding.left.round(),
+        padT: fit.padding.top.round(),
       ),
     );
   }
@@ -253,11 +263,14 @@ class _HomePageState extends State<HomePage> with SingleTickerProviderStateMixin
   }
 
   String get _statusText {
+    if (_bootError != null && !_session.started) return _bootError!;
     if (!_session.started && !_session.busy) {
       final assets = _locateAssets();
-      if (assets == null) return 'missing host.so / kernel.wasm';
+      if (assets == null) {
+        return 'missing libagentos_flutter_host.so or kernel.wasm';
+      }
       if (assets.vtLib == null) return 'missing libghostty-vt.so';
-      if (assets.image == null) return 'missing loom.tar';
+      if (assets.image == null) return 'missing loom.tar / posix.tar';
     }
     return _session.statusLine;
   }

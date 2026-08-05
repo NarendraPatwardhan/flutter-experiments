@@ -420,6 +420,35 @@ final class GhosttyDesktopNotificationNative extends Struct {
   external GhosttyString body;
 }
 
+/// One MIME representation in a clipboard write (borrowed for callback duration).
+final class GhosttyClipboardContentNative extends Struct {
+  external GhosttyString mime;
+  external GhosttyString data;
+}
+
+/// GhosttyClipboardWrite — sized atomic clipboard write request.
+final class GhosttyClipboardWriteNative extends Struct {
+  @Size()
+  external int size;
+  @Int32()
+  external int location;
+  external Pointer<GhosttyClipboardContentNative> contents;
+  @Size()
+  external int contentsLen;
+}
+
+/// Clipboard write result (c_int enum; OSC 52 ignores it, still return honestly).
+const int kClipboardWriteResultSuccess = 0;
+const int kClipboardWriteResultDenied = 1;
+const int kClipboardWriteResultUnsupported = 2;
+const int kClipboardWriteResultBusy = 3;
+const int kClipboardWriteResultInvalidData = 4;
+const int kClipboardWriteResultIoError = 5;
+
+const int kClipboardLocationStandard = 0;
+const int kClipboardLocationSelection = 1;
+const int kClipboardLocationPrimary = 2;
+
 /// GhosttyKittyGraphicsPlacementRenderInfo — sized render geometry helper.
 final class GhosttyKittyPlacementRenderInfoNative extends Struct {
   @Size()
@@ -628,6 +657,12 @@ typedef DesktopNotificationNative = Void Function(
   Pointer<Void> term,
   Pointer<Void> userdata,
   Pointer<GhosttyDesktopNotificationNative> notification,
+);
+/// Returns [GhosttyClipboardWriteResult] (c_int).
+typedef ClipboardWriteNative = Int32 Function(
+  Pointer<Void> term,
+  Pointer<Void> userdata,
+  Pointer<GhosttyClipboardWriteNative> write,
 );
 
 // Sys PNG decode callback (sys.h)
@@ -957,9 +992,17 @@ class GhosttyVtNative {
         formatterFormatAlloc = _lib.lookupFunction<_FormatterFormatAlloc,
             _FormatterFormatAllocDart>('ghostty_formatter_format_alloc'),
         formatterFree = _lib.lookupFunction<_Void_Ptr, _Void_PtrDart>(
-            'ghostty_formatter_free');
+            'ghostty_formatter_free'),
+        colorPaletteDefault = _lib.lookupFunction<
+            Void Function(Pointer<GhosttyColorRgb> palette),
+            void Function(Pointer<GhosttyColorRgb> palette)>(
+          'ghostty_color_palette_default',
+        );
 
   final DynamicLibrary _lib;
+
+  /// Fill a 256-entry [GhosttyColorRgb] array with Ghostty's default palette.
+  final void Function(Pointer<GhosttyColorRgb> palette) colorPaletteDefault;
 
   final _TerminalNewDart terminalNew;
   final _Void_PtrDart terminalFree;

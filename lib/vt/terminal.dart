@@ -59,6 +59,7 @@ class VtTerminal {
   NativeCallable<PwdChangedNative>? _pwdCall;
   NativeCallable<ProgressReportNative>? _progressCall;
   NativeCallable<DesktopNotificationNative>? _notifyCall;
+  NativeCallable<ClipboardWriteNative>? _clipboardCall;
 
   /// Opaque Ghostty terminal handle for encoder / render APIs.
   Pointer<Void> get handle => _terminal;
@@ -125,7 +126,7 @@ class VtTerminal {
         rows: rows,
       );
       try {
-        // G4: process-global PNG decoder + per-terminal Kitty storage budget.
+        // Process-global PNG decoder + per-terminal Kitty storage + effects.
         installPngDecoderOnce(native);
         term.enableKittyGraphics();
         term.setDefaultTheme();
@@ -143,7 +144,7 @@ class VtTerminal {
     }
   }
 
-  /// Apply default FG / BG / cursor from [VtTheme] (or overrides).
+  /// Apply default FG / BG / cursor / 256-color palette from [VtTheme].
   void setDefaultTheme({
     Color fg = VtTheme.foreground,
     Color bg = VtTheme.background,
@@ -153,6 +154,8 @@ class VtTerminal {
     final bgPtr = mallocBytes<GhosttyColorRgb>(1, sizeOf<GhosttyColorRgb>());
     final fgPtr = mallocBytes<GhosttyColorRgb>(1, sizeOf<GhosttyColorRgb>());
     final curPtr = mallocBytes<GhosttyColorRgb>(1, sizeOf<GhosttyColorRgb>());
+    // GhosttyColorRgb is 3 bytes; array of 256 is 768 bytes (no padding on packed rgb).
+    final palette = mallocBytes<GhosttyColorRgb>(256, sizeOf<GhosttyColorRgb>());
     try {
       bgPtr.ref
         ..r = bg.red
@@ -166,59 +169,65 @@ class VtTerminal {
         ..r = cursor.red
         ..g = cursor.green
         ..b = cursor.blue;
-      _native.terminalSet(
+      _check(_native.terminalSet(
         _terminal,
         kTerminalOptColorBackground,
         bgPtr.cast(),
-      );
-      _native.terminalSet(
+      ));
+      _check(_native.terminalSet(
         _terminal,
         kTerminalOptColorForeground,
         fgPtr.cast(),
-      );
-      _native.terminalSet(
+      ));
+      _check(_native.terminalSet(
         _terminal,
         kTerminalOptColorCursor,
         curPtr.cast(),
-      );
+      ));
+      // Default xterm/Ghostty 256-color cube so SGR palette colors are honest.
+      _native.colorPaletteDefault(palette);
+      _check(_native.terminalSet(
+        _terminal,
+        kTerminalOptColorPalette,
+        palette.cast(),
+      ));
     } finally {
       freePtr(bgPtr);
       freePtr(fgPtr);
       freePtr(curPtr);
+      freePtr(palette);
+    }
+  }
+
+  void _check(int rc, [String what = 'terminal_set']) {
+    if (rc != kGhosttySuccess) {
+      throw StateError('libghostty-vt $what failed: $rc');
     }
   }
 
   /// Enable Kitty graphics storage (64 MiB default).
-  ///
-  /// Delegates to the top-level [enableKittyGraphics] helper in graphics.dart
-  /// (library-private import of the same name is the free function when
-  /// called without a receiver; here we reimplement to avoid shadowing).
   void enableKittyGraphics({int limitBytes = 64 * 1024 * 1024}) {
     _ensureOpen();
-    // Call free function via explicit import alias path:
-    // top-level takes (native, term, {storageLimit}).
+    if (limitBytes <= 0) {
+      throw ArgumentError.value(limitBytes, 'limitBytes', 'must be > 0');
+    }
     final lim = mallocBytes<Uint64>(1, sizeOf<Uint64>());
     try {
       lim.value = limitBytes;
-      final rc = _native.terminalSet(
+      _check(_native.terminalSet(
         _terminal,
         kTerminalOptKittyImageStorageLimit,
         lim.cast(),
-      );
-      if (rc != kGhosttySuccess) {
-        throw StateError(
-          'ghostty_terminal_set(KITTY_IMAGE_STORAGE_LIMIT) failed: $rc',
-        );
-      }
+      ));
     } finally {
       freePtr(lim);
     }
   }
 
-  /// Register WRITE_PTY / BELL / TITLE / PWD / PROGRESS / NOTIFY via [NativeCallable].
+  /// Register WRITE_PTY / BELL / TITLE / PWD / CLIPBOARD / PROGRESS / NOTIFY.
   ///
   /// Idempotent: clears prior callables first. Callbacks only enqueue; they
-  /// never re-enter [write].
+  /// never re-enter [write] and never touch the platform clipboard.
   void installEffects() {
     _ensureOpen();
     _clearEffectOpts();
@@ -233,38 +242,48 @@ class VtTerminal {
         NativeCallable<ProgressReportNative>.isolateLocal(_onProgress);
     _notifyCall =
         NativeCallable<DesktopNotificationNative>.isolateLocal(_onNotification);
+    // Returning callback: must supply exceptionalReturn (io_error).
+    _clipboardCall = NativeCallable<ClipboardWriteNative>.isolateLocal(
+      _onClipboardWrite,
+      exceptionalReturn: kClipboardWriteResultIoError,
+    );
 
-    _native.terminalSet(_terminal, kTerminalOptUserdata, nullptr);
-    _native.terminalSet(
+    _check(_native.terminalSet(_terminal, kTerminalOptUserdata, nullptr));
+    _check(_native.terminalSet(
       _terminal,
       kTerminalOptWritePty,
       _writePtyCall!.nativeFunction.cast(),
-    );
-    _native.terminalSet(
+    ));
+    _check(_native.terminalSet(
       _terminal,
       kTerminalOptBell,
       _bellCall!.nativeFunction.cast(),
-    );
-    _native.terminalSet(
+    ));
+    _check(_native.terminalSet(
       _terminal,
       kTerminalOptTitleChanged,
       _titleCall!.nativeFunction.cast(),
-    );
-    _native.terminalSet(
+    ));
+    _check(_native.terminalSet(
       _terminal,
       kTerminalOptPwdChanged,
       _pwdCall!.nativeFunction.cast(),
-    );
-    _native.terminalSet(
+    ));
+    _check(_native.terminalSet(
+      _terminal,
+      kTerminalOptClipboardWrite,
+      _clipboardCall!.nativeFunction.cast(),
+    ));
+    _check(_native.terminalSet(
       _terminal,
       kTerminalOptProgressReport,
       _progressCall!.nativeFunction.cast(),
-    );
-    _native.terminalSet(
+    ));
+    _check(_native.terminalSet(
       _terminal,
       kTerminalOptDesktopNotification,
       _notifyCall!.nativeFunction.cast(),
-    );
+    ));
   }
 
   void _onWritePty(
@@ -319,9 +338,42 @@ class VtTerminal {
     _chrome.add(VtChromeNotification(title: title, body: body));
   }
 
+  /// OSC 52 / OSC 1337 clipboard write — copy payload into chrome queue.
+  ///
+  /// Must not touch Flutter/platform APIs here (runs inside [write]).
+  int _onClipboardWrite(
+    Pointer<Void> term,
+    Pointer<Void> userdata,
+    Pointer<GhosttyClipboardWriteNative> write,
+  ) {
+    if (write == nullptr) return kClipboardWriteResultInvalidData;
+    final w = write.ref;
+    final len = w.contentsLen;
+    final parts = <({String mime, List<int> data})>[];
+    if (len > 0 && w.contents != nullptr) {
+      for (var i = 0; i < len; i++) {
+        final c = w.contents[i];
+        parts.add((
+          mime: _ghosttyString(c.mime),
+          data: _ghosttyBytes(c.data),
+        ));
+      }
+    }
+    _chrome.add(VtChromeClipboardWrite(
+      location: w.location,
+      parts: parts,
+    ));
+    return kClipboardWriteResultSuccess;
+  }
+
   static String _ghosttyString(GhosttyString s) {
     if (s.len <= 0 || s.ptr == nullptr) return '';
     return utf8.decode(s.ptr.asTypedList(s.len), allowMalformed: true);
+  }
+
+  static List<int> _ghosttyBytes(GhosttyString s) {
+    if (s.len <= 0 || s.ptr == nullptr) return const <int>[];
+    return Uint8List.fromList(s.ptr.asTypedList(s.len));
   }
 
   /// Drain queued WRITE_PTY response bytes (for AgentOS send_input).
@@ -511,6 +563,7 @@ class VtTerminal {
     _native.terminalSet(_terminal, kTerminalOptBell, nullptr);
     _native.terminalSet(_terminal, kTerminalOptTitleChanged, nullptr);
     _native.terminalSet(_terminal, kTerminalOptPwdChanged, nullptr);
+    _native.terminalSet(_terminal, kTerminalOptClipboardWrite, nullptr);
     _native.terminalSet(_terminal, kTerminalOptProgressReport, nullptr);
     _native.terminalSet(_terminal, kTerminalOptDesktopNotification, nullptr);
     _native.terminalSet(_terminal, kTerminalOptUserdata, nullptr);
@@ -525,6 +578,8 @@ class VtTerminal {
     _titleCall = null;
     _pwdCall?.close();
     _pwdCall = null;
+    _clipboardCall?.close();
+    _clipboardCall = null;
     _progressCall?.close();
     _progressCall = null;
     _notifyCall?.close();

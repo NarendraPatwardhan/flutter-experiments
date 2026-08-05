@@ -2,14 +2,14 @@
 
 Working notes for making this product’s terminal **look and behave like Ghostty**, not like a demo that happens to link `libghostty-vt`.
 
-**This document is not sacred.** It is not `SYSTEM.md`. Alpha code and this sketch may both change. Prefer a clean break over shims when the design is wrong.
+**This document is not sacred.** It is not `SYSTEM.md`. Prefer a clean break over shims when the design is wrong. Quality is not deferred: if the embed is wrong, fix it.
 
 Related:
 
 - Permanent rules: `SYSTEM.md`, `AGENTS.md`
 - AgentOS control plane: `docs/aos-c-api.md`, `docs/native-host-ffi.md`
 - Pin: `@ghostty` (commit in `MODULE.bazel`) via `//third_party/ghostty`
-- Product surface today: `lib/vt/*`, paint path in `lib/main.dart`
+- Product surface: `lib/vt/*`, `lib/session/product_session.dart`, `lib/main.dart`
 
 Upstream itself warns that the C API is still evolving. We treat **libghostty-vt as the authority** for terminal semantics and encoding; we own only the Flutter presentation and the glue into AgentOS.
 
@@ -38,7 +38,7 @@ A pristine terminal experience is not “draw characters on a grid.” It is the
    render state  ◄── update ─────────────┘
          │
          ▼
-   paint (cells, styles, cursor, selection, later images)
+   paint (cells, styles, cursor, selection, Kitty images)
          │
    keys / mouse / focus / paste
          │
@@ -48,7 +48,7 @@ A pristine terminal experience is not “draw characters on a grid.” It is the
    bytes back into the guest (AgentOS send_input)
 ```
 
-Today we implement a **one-way smoke slice** of that loop: write guest output → snapshot a few cell fields → paint. Input, effects, styles, scroll, and selection are largely absent. That is the same shape of debt we once had on the AgentOS C ABI — except here the **native library is already complete**; the missing work is embedder depth.
+That closed loop is implemented: `ProductSession` ticks AgentOS, feeds `take_output` into `vt_write`, drains WRITE_PTY back into `send_input`, encodes keys/focus/paste through Ghostty, projects render-state into `VtFrame` (styles, selection, dirty rows), and paints Kitty image layers. Further work is fidelity and product taste on that spine — not a second architecture.
 
 ---
 
@@ -76,23 +76,34 @@ The map of the world is `include/ghostty/vt.h` and the module headers it include
 
 ### Native
 
-`//third_party/ghostty` builds a real `libghostty-vt` against the git pin. Unicode tables, terminal options packages, and Zig 0.16 are product-constrained. This side is not a stub.
+`//third_party/ghostty` builds a real `libghostty-vt` against the git pin. Unicode tables, terminal options packages, and Zig 0.16 are product-constrained.
 
-### Dart
+### Dart embedder
 
-`lib/vt/bindings.dart` hand-binds on the order of **twenty** symbols out of ~**one hundred eighty** exported `ghostty_*` entry points. The live path is essentially:
+`lib/vt/*` is a plane-split embedder:
 
-- `terminal_new` / `free` / `vt_write` / `resize` / `set` (only default FG/BG/cursor colors)
-- `render_state_new` / `update` / `get` (cols, rows, dirty clear, bg/fg, cursor pos/style/visible)
-- row iterator + cell walk (grapheme UTF-8, fg, bg)
-
-`VtCell` carries text and optional colors only. No bold, italic, underline, inverse, selection, or style-derived underline color. The painter is Ghostty-*inspired* (cell metrics, cursor styles, block-under-glyph) but starved of style inputs.
+| Module | Role |
+|--------|------|
+| `bindings.dart` / `keys.dart` | FFI surface used by G1–G4 |
+| `terminal.dart` | Terminal ownership, theme/palette, effects, write/resize/scroll |
+| `encoder.dart` / `mouse.dart` | Key / focus / paste / mouse encode from live terminal modes |
+| `render.dart` / `frame.dart` | Render-state → immutable `VtFrame` (full style, selection, dirty) |
+| `painter.dart` / `metrics.dart` / `theme.dart` | Ghostty-aligned paint + chrome |
+| `selection.dart` / `scroll.dart` | Gesture selection + viewport scroll |
+| `graphics.dart` / `png.dart` / `image_cache.dart` | Kitty graphics → `ui.Image` layers |
+| `compress.dart` / `snapshot.dart` / `format.dart` | Idle compression + export helpers |
 
 ### Product session
 
-`main.dart` boots AgentOS, dumps a few `exec` outputs into the VT, and closes the VM. There is no sustained input loop, no `WRITE_PTY` path back into AgentOS, no key encoder. Visually we show “a grid that received VT once,” not “a living terminal.”
+`lib/session/product_session.dart` owns both hosts and the ~50 Hz loop:
 
-So: **library rich, embedder thin.** Expanding AgentOS further does not fix terminal quality. Expanding the Ghostty embed does.
+- boot VT (theme + 256 palette + Kitty + effects) + AgentOS
+- tick → take_output → vt_write → WRITE_PTY → send_input
+- keys/focus/paste via Ghostty encoders only (no hand-rolled CSI)
+- selection, scroll, clipboard write (OSC 52), progress, notifications → chrome
+- keep both hosts alive until dispose
+
+So: **library rich, embedder real.** Quality work is fidelity (modes, mouse protocol when tracking is on, paint parity), not reopening the architecture.
 
 ---
 
@@ -114,7 +125,7 @@ So: **library rich, embedder thin.** Expanding AgentOS further does not fix term
 
 8. **Match Ghostty’s visual grammar, not its binary.** Font is Flutter/`fontconfig` mono; metrics should follow Ghostty’s cell/cursor rules (`metrics.dart` already aims here). Padding, scrollbar, selection highlight, and unfocused hollow cursor should feel familiar to a Ghostty user.
 
-9. **Alpha may restructure `lib/vt`.** The smoke session and thin `VtCell` are not frozen. Prefer the right model over preserving demo paint code.
+9. **Prefer the right model over preserving dead paths.** If `lib/vt` shape is wrong, rewrite it; do not pile flags onto obsolete session facades.
 
 10. **Do not pull full Ghostty app/runtime into the product.** No `ghostty_app_*`, no embedding GTK Ghostty. lib-vt only.
 
@@ -124,7 +135,7 @@ So: **library rich, embedder thin.** Expanding AgentOS further does not fix term
 
 ### 5.1 Three planes
 
-Think of the embed as three planes that must all exist; smoke only built the middle of one.
+Think of the embed as three planes that must all exist; product code owns all three.
 
 ```text
 ┌─────────────────────────────────────────────────────────────┐
@@ -161,13 +172,13 @@ Think of the embed as three planes that must all exist; smoke only built the mid
 
 **Recommended end state:**
 
-- A **session owner** (worker isolate or carefully serialized main-isolate service) holds:
+- A **session owner** (today: main-isolate `ProductSession`; may move to a worker isolate) holds:
   - `GhosttyTerminal`
   - `GhosttyRenderState` + reusable row/cell iterators
-  - `GhosttyKeyEncoder` (and later mouse encoder)
-  - optional selection-gesture state
+  - `GhosttyKeyEncoder` + mouse encoder helpers
+  - selection-gesture state
   - AgentOS `AgentOsVm` handle (or a channel to the VM owner if split further)
-- UI isolate receives **immutable** `VtFrame` + chrome model updates; sends **input intents** (key, pointer, paste, focus, scroll).
+- UI receives **immutable** `VtFrame` + chrome model updates; sends **input intents** (key, pointer, paste, focus, scroll).
 
 Effects fire **synchronously** inside `vt_write` on the session owner’s thread. Their job is to enqueue:
 
@@ -196,7 +207,7 @@ loop:
     encode → send_input
   on resize:
     terminal_resize(cols, rows, cellW, cellH)
-    (AgentOS may need size awareness later; for now VT size reports via effects)
+    (AgentOS size awareness is optional; VT size reports go via effects)
   status / at_prompt → optional chrome
 keep both hosts alive until app dispose
 ```
@@ -231,7 +242,7 @@ Flutter `KeyEvent` / pointer events are **host** events. They become terminal by
 
 Focus in/out uses `ghostty_focus_encode` when the surface gains/loses focus. Paste uses `ghostty_paste_is_safe` + encode (bracketed paste when the terminal is in that mode).
 
-Guessing “Enter is `\r`” is fine for a hello-world; it is **wrong** as product architecture.
+Guessing “Enter is `\r`” is **wrong** as product architecture — always use the Ghostty key encoder.
 
 ### 5.6 Effects model we want
 
@@ -243,21 +254,19 @@ Minimum viable honesty:
 | `TITLE_CHANGED` | chrome title (read via terminal get or OSC path as upstream recommends) |
 | `PWD_CHANGED` | chrome / status |
 | `BELL` | brief visual flash (and optional system bell) |
-| `CLIPBOARD_WRITE` | platform clipboard (with product policy: allow / confirm) |
+| `CLIPBOARD_WRITE` | platform clipboard (OSC 52 / OSC 1337; text MIME; empty clears) |
 | `DEVICE_ATTRIBUTES` / `SIZE` / `COLOR_SCHEME` / `XTVERSION` | usually satisfied *through* WRITE_PTY if the terminal emits replies; install callbacks when the pin requires explicit handling |
 
 Register via `ghostty_terminal_set` with a single userdata pointing at the session owner. Clearing callbacks is part of dispose.
 
-### 5.7 Scroll and selection (second ring of “feels real”)
+### 5.7 Scroll and selection — **Done**
 
-Ghostty users expect:
+Ghostty users expect, and we implement:
 
-- **Scrollback**: viewport moves through history (`scroll_viewport`), scrollbar derived from terminal data (total rows, scrollback rows, scrollbar struct).
-- **Selection**: gesture state machine in lib-vt (`selection_gesture_*` + terminal selection opts), paint via row selection ranges or per-cell selected, copy via `selection_format_*`.
+- **Scrollback**: viewport moves through history (`scroll_viewport`); scrollbar metrics available from terminal data.
+- **Selection**: gesture state machine in lib-vt (`selection_gesture_*` + terminal selection opts), paint via per-cell selected, copy via `selection_format_*` (Ctrl/Cmd+Shift+C).
 
-These are not optional forever; they are what separates a log viewer from a terminal. They depend on planes A/B/C already being real (styles + input + effects first).
-
-### 5.8 Kitty graphics (third ring) — **Done**
+### 5.8 Kitty graphics — **Done**
 
 Terminal storage limit + process-global PNG decoder (`sys`), placement walk → `VtImageLayer`, async `VtImageCache` → `ui.Image`, painter composites below/above text by z. Geometry from `ghostty_kitty_graphics_placement_render_info`.
 
@@ -301,44 +310,38 @@ lib/vt/
   snapshot.dart      // snapshot_encode_buf grow helper
   format.dart        // terminal formatter plain/vt/html
   selection.dart / scroll.dart / mouse.dart  // G3 interaction
-  session.dart       // optional façade
+  session.dart       // legacy façade (palette-aligned; product uses terminal.dart)
 ```
 
-Today much of this is collapsed into `session.dart` + thin frame. That is fine until styles/effects force a split; then **split by plane**, not by “one more method on the god session.”
+Split is already by plane. Product ownership lives in `lib/session/product_session.dart` — that object is **not** the Ghostty terminal handle.
 
-AgentOS stays in `lib/agent_os/`. A higher-level `lib/session/` (product) may own both hosts and the loop — that product session is **not** the Ghostty terminal object.
+AgentOS stays in `lib/agent_os/`.
 
 ---
 
-## 8. Phased expansion (narrative, not a punch list)
+## 8. Phased expansion (narrative history)
 
-Phases describe **capability thresholds**, not ticket IDs. Ship a threshold when the product visibly crosses it.
+Phases describe **capability thresholds** that have been crossed. G0–G4 are in tree.
 
-### Phase G0 — Smoke (current)
+### Phase G0 — Smoke
 
-Write bytes, paint text and flat colors, resize grid, default three theme colors. Good for proving the `.so` loads and AgentOS can dump output. **Not** a terminal product.
+Write bytes, paint text and flat colors, resize grid, default theme colors. Proved `.so` load + AgentOS dump. Superseded.
 
-### Phase G1 — Honest picture
+### Phase G1 — Honest picture — **Done**
 
-The grid shows what the emulator believes: styles, inverse, underline, palette-aware colors, real cursor attributes (blink, color, wide tail). Dirty tracking may still be “always full repaint.”
+Styles, inverse, underline, palette-aware colors, real cursor attributes. Comparison to Ghostty is fair on static styled output.
 
-At G1, demos stop looking like a dumb teletype. Comparison to Ghostty becomes fair on **static** screenshots of styled output.
+### Phase G2 — Honest machine — **Done**
 
-### Phase G2 — Honest machine
+Effects + WRITE_PTY closed with AgentOS; key encoder driven from terminal modes; focus encode; paste safety. Live dual-host session.
 
-Effects + WRITE_PTY closed with AgentOS; key encoder driven from terminal modes; focus encode; basic paste safety. Live session loop keeps both hosts open.
+### Phase G3 — Honest interaction — **Done**
 
-At G2, interactive shells and many TUIs start to work. This is the first phase that can claim “computer-in-a-terminal” rather than “log of exec.”
-
-### Phase G3 — Honest interaction
-
-Mouse encode, selection gestures, copy, scrollback navigation, scrollbar chrome. Unfocused/hover behaviors.
-
-At G3, daily-driver terminal habits work.
+Selection gestures, copy, scrollback navigation, mouse helpers. Daily-driver terminal habits work.
 
 ### Phase G4 — Full embedder ambition — **Done**
 
-Kitty graphics (`graphics.dart` / `image_cache.dart` / painter z-layers), scrollback compression scheduling (`compress.dart`), snapshots/formatter (`snapshot.dart` / `format.dart`), partial dirty projection (`render.dart` + `VtFrame.dirtyRows`), polish (progress OSC + desktop notifications → status line).
+Kitty graphics, scrollback compression, snapshots/formatter, partial dirty projection, progress OSC + desktop notifications, OSC 52 clipboard write.
 
 ---
 
@@ -379,7 +382,9 @@ If the two sketches conflict, fix the sketch or the code — not permanent syste
 | Effects + WRITE_PTY ↔ AgentOS | **Done** (G2: `terminal.dart` → `ProductSession`) |
 | Key / focus / paste encoders | **Done** (G2: `encoder.dart`) |
 | Live dual-host session loop | **Done** (`lib/session/product_session.dart`, `main.dart`) |
-| Selection + scroll + mouse helpers | **Done** (G3 basic: `selection.dart`, `scroll.dart`, `mouse.dart`) |
+| Selection + scroll + mouse helpers | **Done** (G3: `selection.dart`, `scroll.dart`, `mouse.dart`) |
+| OSC 52 clipboard write | **Done** (effect → platform text clipboard) |
+| Default 256-color palette | **Done** (`ghostty_color_palette_default` on open) |
 | Kitty graphics + image paint | **Done** (G4: `graphics.dart`, `image_cache.dart`, painter z-layers) |
 | Partial dirty projection | **Done** (G4: `render.dart` clean/partial/full + `VtFrame.dirtyRows`) |
 | Scrollback compression scheduler | **Done** (G4: `compress.dart` idle 300ms incremental) |
@@ -387,7 +392,7 @@ If the two sketches conflict, fix the sketch or the code — not permanent syste
 | Progress OSC + desktop notifications | **Done** (G4: `VtChromeProgress` / `VtChromeNotification` → status) |
 | Docs for embed intent | **This sketch** |
 
-G1–G4 embedder planes are implemented. Further polish is product taste, not a missing plane.
+G1–G4 embedder planes are implemented. Further work is fidelity and product taste, not a missing plane.
 
 ---
 
@@ -401,8 +406,8 @@ Ideal is a **full Ghostty-shaped embed**:
 2. Flutter as a faithful renderer of render-state + style,
 3. encoders for all host input,
 4. effects that close the loop with AgentOS as the pty peer,
-5. then scroll, selection, and graphics as the experience deepens.
+5. scroll, selection, graphics, and clipboard as first-class host duties.
 
-G1–G4 embedder work is in tree: closed loop, full cell style, interaction, Kitty graphics, partial dirty, compression, snapshot/format, progress/notifications. Treat further work as product polish on that spine, not as a missing plane.
+G1–G4 are in tree. Treat further work as product quality on that spine, not as a missing plane.
 
-Update this file when the embed architecture diverges. Prefer rewriting `lib/vt` over piling flags onto the smoke path.
+Update this file when the embed architecture diverges. Prefer rewriting `lib/vt` over piling flags onto dead paths.
