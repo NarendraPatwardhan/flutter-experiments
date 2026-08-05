@@ -3,8 +3,14 @@ import 'package:flutter/material.dart';
 import 'frame.dart';
 import 'metrics.dart';
 
-/// Paints a [VtFrame] with Ghostty geometry: fixed mono cells, baseline glyphs,
-/// balanced padding, cursor styles from `src/renderer/cursor.zig`.
+/// Ghostty-style cell painter.
+///
+/// Layout rules from `src/renderer/size.zig` + `src/font/Metrics.zig` +
+/// `src/renderer/cursor.zig`:
+/// - Grid origin = padding; cell (x,y) at (padL + x·cellW, padT + y·cellH).
+/// - Glyphs share the measured mono advance so a run of N cells is N·cellW.
+/// - Baseline is [VtMetrics.topToBaseline] from the cell top.
+/// - Block cursor under text (inverted glyph); bar/underline/hollow after.
 class VtPainter extends CustomPainter {
   VtPainter({
     required this.frame,
@@ -20,8 +26,7 @@ class VtPainter extends CustomPainter {
 
   @override
   void paint(Canvas canvas, Size size) {
-    final bg = Paint()..color = frame.background;
-    canvas.drawRect(Offset.zero & size, bg);
+    canvas.drawRect(Offset.zero & size, Paint()..color = frame.background);
 
     if (frame.cols <= 0 || frame.rows <= 0) return;
 
@@ -29,20 +34,16 @@ class VtPainter extends CustomPainter {
     final cellH = metrics.cellHeight;
     final origin = Offset(padding.left, padding.top);
 
-    final gridRect = Rect.fromLTWH(
-      origin.dx,
-      origin.dy,
-      frame.cols * cellW,
-      frame.rows * cellH,
-    );
+    final gridW = frame.cols * cellW;
+    final gridH = frame.rows * cellH;
     canvas.save();
-    canvas.clipRect(gridRect);
+    canvas.clipRect(Rect.fromLTWH(origin.dx, origin.dy, gridW, gridH));
 
-    // --- cell backgrounds ---
+    // --- backgrounds (full cell, Ghostty cell_bg pass) ---
     for (var y = 0; y < frame.rows; y++) {
       for (var x = 0; x < frame.cols; x++) {
-        final cellBg = frame.cellAt(x, y).bg;
-        if (cellBg != null && cellBg != frame.background) {
+        final bg = frame.cellAt(x, y).bg;
+        if (bg != null && bg != frame.background) {
           canvas.drawRect(
             Rect.fromLTWH(
               origin.dx + x * cellW,
@@ -50,7 +51,7 @@ class VtPainter extends CustomPainter {
               cellW,
               cellH,
             ),
-            Paint()..color = cellBg,
+            Paint()..color = bg,
           );
         }
       }
@@ -64,24 +65,27 @@ class VtPainter extends CustomPainter {
         frame.cursorX! < frame.cols &&
         frame.cursorY! < frame.rows;
 
+    // Unfocused → hollow block (cursor.zig).
     final cursorStyle =
         focused ? frame.cursorStyle : VtCursorStyle.blockHollow;
 
+    // Block cursor first (under glyphs), matching Contents.setCursor.
     if (showCursor && cursorStyle == VtCursorStyle.block) {
-      final rect = Rect.fromLTWH(
-        origin.dx + frame.cursorX! * cellW,
-        origin.dy + frame.cursorY! * cellH,
-        cellW,
-        cellH,
+      canvas.drawRect(
+        Rect.fromLTWH(
+          origin.dx + frame.cursorX! * cellW,
+          origin.dy + frame.cursorY! * cellH,
+          cellW,
+          cellH,
+        ),
+        Paint()..color = frame.foreground,
       );
-      canvas.drawRect(rect, Paint()..color = frame.foreground);
     }
 
-    // --- glyphs: one TextPainter per run of same-colored cells on a row ---
-    // Same advance as metrics.cellWidth → natural mono packing.
+    // --- text: same-color runs as one string (true mono packing) ---
+    // cellW MUST equal the face advance; then N chars in a run span N·cellW.
     final baseStyle = metrics.style.copyWith(
       color: frame.foreground,
-      height: 1.0,
       letterSpacing: 0,
       wordSpacing: 0,
     );
@@ -98,15 +102,14 @@ class VtPainter extends CustomPainter {
           continue;
         }
 
-        final isBlockCursorCell = showCursor &&
+        final blockHere = showCursor &&
             cursorStyle == VtCursorStyle.block &&
             frame.cursorX == x &&
             frame.cursorY == y;
-        final fg = isBlockCursorCell
+        final fg = blockHere
             ? frame.background
             : (cell.fg ?? frame.foreground);
 
-        // Extend run while fg matches and cells are non-empty single-width text.
         final buf = StringBuffer(cell.text);
         var end = x + 1;
         while (end < frame.cols) {
@@ -120,15 +123,13 @@ class VtPainter extends CustomPainter {
               ? frame.background
               : (next.fg ?? frame.foreground);
           if (nextFg != fg) break;
-          // Keep runs short if a cell has multi-codepoint grapheme — still OK.
           buf.write(next.text);
           end++;
         }
 
-        final runText = buf.toString();
         final tp = TextPainter(
           text: TextSpan(
-            text: runText,
+            text: buf.toString(),
             style: baseStyle.copyWith(color: fg),
           ),
           textDirection: TextDirection.ltr,
@@ -137,60 +138,26 @@ class VtPainter extends CustomPainter {
             applyHeightToFirstAscent: false,
             applyHeightToLastDescent: false,
           ),
-          strutStyle: StrutStyle(
-            fontFamily: metrics.fontFamily,
-            fontFamilyFallback: VtMetrics.fontFamilyFallback,
-            fontSize: metrics.fontSize,
-            height: 1.0,
-            forceStrutHeight: true,
-          ),
         )..layout();
 
-        // If the run width drifted from cellW * n (font mismatch), fall back
-        // to per-cell paint so we never double-space a whole line again.
-        final expected = cellW * (end - x);
-        final cellLeft = origin.dx + x * cellW;
         final measuredBaseline = tp.computeDistanceToActualBaseline(
           TextBaseline.alphabetic,
         );
-        final dy = baselineY - measuredBaseline;
-
-        if ((tp.width - expected).abs() <= cellW * 0.35 || (end - x) == 1) {
-          // Natural mono run — paint as one string (best look).
-          // If slightly short/long, still OK; terminal grid is authoritative.
-          tp.paint(canvas, Offset(cellLeft, dy));
-        } else {
-          // Per-cell fallback when the face is not truly mono.
-          for (var cx = x; cx < end; cx++) {
-            final c = frame.cellAt(cx, y);
-            if (c.text.isEmpty) continue;
-            final ctp = TextPainter(
-              text: TextSpan(
-                text: c.text,
-                style: baseStyle.copyWith(color: fg),
-              ),
-              textDirection: TextDirection.ltr,
-              maxLines: 1,
-              textHeightBehavior: const TextHeightBehavior(
-                applyHeightToFirstAscent: false,
-                applyHeightToLastDescent: false,
-              ),
-            )..layout(maxWidth: cellW);
-            final cBase = ctp.computeDistanceToActualBaseline(
-              TextBaseline.alphabetic,
-            );
-            ctp.paint(
-              canvas,
-              Offset(origin.dx + cx * cellW, baselineY - cBase),
-            );
-          }
-        }
+        // Place so the string’s baseline sits on the cell baseline.
+        // X = left edge of the first cell in the run (Ghostty grid_pos).
+        tp.paint(
+          canvas,
+          Offset(
+            origin.dx + x * cellW,
+            baselineY - measuredBaseline,
+          ),
+        );
 
         x = end;
       }
     }
 
-    // --- bar / underline / hollow (after text) ---
+    // --- bar / underline / hollow after text ---
     if (showCursor && cursorStyle != VtCursorStyle.block) {
       final rect = Rect.fromLTWH(
         origin.dx + frame.cursorX! * cellW,
@@ -198,7 +165,7 @@ class VtPainter extends CustomPainter {
         cellW,
         cellH,
       );
-      final cursorPaint = Paint()..color = frame.foreground;
+      final paint = Paint()..color = frame.foreground;
       switch (cursorStyle) {
         case VtCursorStyle.bar:
           canvas.drawRect(
@@ -208,7 +175,7 @@ class VtPainter extends CustomPainter {
               metrics.cursorThickness,
               rect.height,
             ),
-            cursorPaint,
+            paint,
           );
         case VtCursorStyle.underline:
           canvas.drawRect(
@@ -218,7 +185,7 @@ class VtPainter extends CustomPainter {
               rect.width,
               metrics.underlineThickness,
             ),
-            cursorPaint,
+            paint,
           );
         case VtCursorStyle.blockHollow:
           canvas.drawRect(
@@ -226,7 +193,7 @@ class VtPainter extends CustomPainter {
             Paint()
               ..color = frame.foreground
               ..style = PaintingStyle.stroke
-              ..strokeWidth = 1.0,
+              ..strokeWidth = 1,
           );
         case VtCursorStyle.block:
           break;
@@ -245,7 +212,6 @@ class VtPainter extends CustomPainter {
   }
 }
 
-/// Terminal surface: font-sized grid + Ghostty padding.
 class VtView extends StatelessWidget {
   const VtView({
     super.key,

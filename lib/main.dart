@@ -234,9 +234,10 @@ class _HomePageState extends State<HomePage> {
 
       vt.writeText(
         '\x1b[1;32magentos\x1b[0m · flutter · libghostty-vt\r\n'
-        '\x1b[90m${vt.cols}×${vt.rows}  cell '
-        '${_metrics.cellWidth.round()}×${_metrics.cellHeight.round()}px'
-        '  ${_metrics.fontFamily}\x1b[0m\r\n',
+        '\x1b[90mgrid ${vt.cols}×${vt.rows}  '
+        'cell ${_metrics.cellWidth.round()}×${_metrics.cellHeight.round()}  '
+        'font ${_metrics.fontSize.round()}pt  '
+        '${_metrics.fontFamily}\x1b[0m\r\n',
       );
       _paintVt(vt);
 
