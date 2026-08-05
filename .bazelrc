@@ -1,7 +1,8 @@
 # ---------------------------------------------------------------------------
-# ALWAYS remote. No local spawn path.
-# Auth: use `bb` (bb login). Never put API keys in this file.
-# Workflow: push to origin first, then `bb build` / BuildBuddy Workflows.
+# When Bazel runs (on BuildBuddy remote runner via `bb remote`, or Workflows):
+# force RBE spawns. Agent hosts must NOT run local `bb build` / `bazel build`.
+# Zero local analysis path:  bb remote build --run_from_branch=main //:app.web
+# Auth: bb login. Never put API keys in this file.
 # ---------------------------------------------------------------------------
 common --enable_bzlmod
 common --enable_workspace=false

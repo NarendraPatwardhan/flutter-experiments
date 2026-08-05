@@ -1,26 +1,22 @@
 # flutter-bazel-hello
 
-Minimal Flutter + rules_flutter. **All builds run on BuildBuddy remote runners** (Workflows). Agent hosts do not run Bazel analysis or compiles.
+Minimal Flutter + rules_flutter with **zero local Bazel analysis**.
 
-## How to build
+## Build (only path)
 
 ```bash
+bb login   # once
+
 git push origin main
+bb remote build --run_from_branch=main //:app.web
+bb remote test  --run_from_branch=main //:widget_test
 ```
 
-Then open [app.buildbuddy.io](https://app.buildbuddy.io/) for the workflow invocation.
+That runs the Bazel client on BuildBuddy’s remote runner (analysis + Flutter SDK fetch + RBE spawns). This laptop is not the coordinator.
 
-Do **not** run `bb build` or `bazel build` on a laptop/agent for product builds — analysis (including Flutter SDK fetch) would run locally.
+Do **not** use plain `bb build` / `bazel build` here.
 
-## Setup (once)
+## Targets
 
-1. [BuildBuddy](https://app.buildbuddy.io/) GitHub app on `NarendraPatwardhan/flutter-experiments`
-2. Workflows enabled for this repo
-3. `buildbuddy.yaml` in tree (already)
-
-## Targets (run only in Workflows)
-
-- `//:app.web` — hermetic web
-- `//:widget_test` — tests
-
-`.bazelrc` still forces remote **spawns** (RBE) when Bazel runs on the workflow runner.
+- `//:app.web` — hermetic web  
+- `//:widget_test` — tests  

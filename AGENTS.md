@@ -1,30 +1,23 @@
-# Agent rules
+# Agent rules — zero local analysis
 
-## Builds are fully remote. No local Bazel.
-
-| Forbidden on agent host | Required |
-|-------------------------|----------|
-| `bazel build` / `bazel test` | Push → BuildBuddy Workflows |
-| `bb build` / `bb test` (local coordinator) | `git push` then watch BuildBuddy UI |
-| Host `flutter build` | Workflow job on BuildBuddy runners |
-
-**Why:** `bb build` still runs **analysis + Flutter SDK repo fetch on the machine that invokes it**. That is local. This repo uses **BuildBuddy Workflows** so the remote runner is the coordinator (analysis + fetches + RBE spawns).
-
-## Correct sequence
+## Only allowed build command
 
 ```bash
-git add -A && git commit -m "..."
 git push origin HEAD
-# Preferred CI path: BuildBuddy Workflows (push-triggered)
-# Interactive full-remote path (remote coordinator, not this host):
-bb remote build //:app.web
-bb remote test  //:widget_test
+bb remote build --run_from_branch=main //:app.web
+bb remote test  --run_from_branch=main //:widget_test
 ```
 
-Never: bare `bb build` / `bazel build` on the agent host (that is local analysis).
+| Command | Allowed? |
+|---------|----------|
+| `bb remote build` / `bb remote test` | **Yes** — Bazel client + analysis on BuildBuddy remote runner |
+| `bb build` / `bazel build` | **No** — analysis on this host |
+| Host `flutter build` | **No** |
 
-## One-time: connect the repo
+`--run_from_branch=main` (or `--run_from_commit=<sha>`) makes the remote runner check out GitHub, not upload a local analysis tree.
 
-BuildBuddy dashboard → GitHub app → enable workflows for `NarendraPatwardhan/flutter-experiments`.
+## After push
 
-Config: `buildbuddy.yaml` (checked in).
+Watch: https://app.buildbuddy.io/
+
+Optional CI: `buildbuddy.yaml` (GitHub app must be connected).
