@@ -130,6 +130,7 @@ zig_library(
     import_name = "symbols_tables",
 )
 
+# ReleaseFast: Debug analysis of ~5MB tables.zig has segfaulted the Zig 0.16 compiler.
 zig_binary(
     name = "props_unigen",
     main = "@ghostty//:src/unicode/props_uucode.zig",
@@ -139,6 +140,7 @@ zig_binary(
         ":unicode_tables_stub",
         ":symbols_tables_stub",
     ],
+    zigopts = ["-OReleaseFast"],
 )
 
 zig_binary(
@@ -150,6 +152,7 @@ zig_binary(
         ":unicode_tables_stub",
         ":symbols_tables_stub",
     ],
+    zigopts = ["-OReleaseFast"],
 )
 
 run_stdout_file(
