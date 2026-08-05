@@ -1,36 +1,28 @@
 //! Run a program after chdir to a root directory.
 //! Usage: chdir_exec <root> <program> [args...]
-//! Resolves program and args to absolute paths before chdir.
+//! Zig 0.16 process.Init API.
 
 const std = @import("std");
 
-pub fn main() !void {
-    const gpa = std.heap.page_allocator;
+pub fn main(init: std.process.Init) !void {
+    const gpa = init.arena.allocator();
+    const io = init.io;
 
-    var argv = try std.process.argsWithAllocator(gpa);
-    defer argv.deinit();
-    _ = argv.next();
+    var args_iter = try init.args.iterateAllocator(gpa);
+    defer args_iter.deinit();
+    _ = args_iter.next(); // argv0
 
-    const root = argv.next() orelse usage();
-    const program_rel = argv.next() orelse usage();
+    const root = args_iter.next() orelse usage();
+    const program_rel = args_iter.next() orelse usage();
 
     const cwd = try std.fs.cwd().realpathAlloc(gpa, ".");
-    defer gpa.free(cwd);
-
     const abs_root = try absPath(gpa, cwd, root);
-    defer gpa.free(abs_root);
     const abs_program = try absPath(gpa, cwd, program_rel);
-    defer gpa.free(abs_program);
 
     var child_argv: std.ArrayList([]const u8) = .empty;
-    defer child_argv.deinit(gpa);
     try child_argv.append(gpa, abs_program);
-    while (argv.next()) |a| {
+    while (args_iter.next()) |a| {
         try child_argv.append(gpa, try absPath(gpa, cwd, a));
-    }
-    defer {
-        var i: usize = 1;
-        while (i < child_argv.items.len) : (i += 1) gpa.free(child_argv.items[i]);
     }
 
     var child = std.process.Child.init(child_argv.items, gpa);
@@ -40,6 +32,7 @@ pub fn main() !void {
         .Exited => |code| std.process.exit(code),
         else => std.process.exit(1),
     }
+    _ = io;
 }
 
 fn usage() noreturn {

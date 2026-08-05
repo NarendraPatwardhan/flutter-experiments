@@ -1,22 +1,24 @@
 //! Run a program and write its stdout to a file.
 //! Usage: stdout_to_file <out_path> <program> [args...]
+//! Zig 0.16 process.Init API.
 
 const std = @import("std");
 
-pub fn main() !void {
-    const gpa = std.heap.page_allocator;
+pub fn main(init: std.process.Init) !void {
+    const gpa = init.arena.allocator();
 
-    var argv = try std.process.argsWithAllocator(gpa);
-    defer argv.deinit();
-    _ = argv.next();
+    var args_iter = try init.args.iterateAllocator(gpa);
+    defer args_iter.deinit();
+    _ = args_iter.next();
 
-    const out_path = argv.next() orelse usage();
-    const program = argv.next() orelse usage();
+    const out_path = args_iter.next() orelse usage();
+    const program = args_iter.next() orelse usage();
 
     var child_argv: std.ArrayList([]const u8) = .empty;
-    defer child_argv.deinit(gpa);
     try child_argv.append(gpa, program);
-    while (argv.next()) |a| try child_argv.append(gpa, a);
+    while (args_iter.next()) |a| {
+        try child_argv.append(gpa, a);
+    }
 
     const out_file = try std.fs.cwd().createFile(out_path, .{});
     defer out_file.close();
