@@ -16,7 +16,7 @@ alias(
     actual = "//native/agentos_flutter_host:agentos_flutter_host",
 )
 
-# Stage kernel + always-opt host .so; strip the shared library for ship size.
+# Stage kernel + always-opt, toolchain-stripped host .so (strip is in the host rule).
 genrule(
     name = "agentos_native_bundle",
     srcs = [
@@ -31,11 +31,6 @@ genrule(
 set -euo pipefail
 cp $(location :agentos_kernel) $(location agentos_native/kernel.wasm)
 cp $(location :agentos_flutter_host) $(location agentos_native/libagentos_flutter_host.so)
-# Drop debug symbols from the staged library (opt build still keeps them until strip).
-if command -v strip >/dev/null 2>&1; then
-  strip --strip-unneeded $(location agentos_native/libagentos_flutter_host.so) || \
-    strip -s $(location agentos_native/libagentos_flutter_host.so) || true
-fi
 """,
 )
 

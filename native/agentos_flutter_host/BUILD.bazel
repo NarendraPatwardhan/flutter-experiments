@@ -5,20 +5,26 @@ package(default_visibility = ["//visibility:public"])
 
 exports_files(["include/agentos_flutter_host.h"])
 
-# Intermediate cdylib (manual): the release target transitions this to opt.
-# Leaving both as default //... names would collide on libagentos_flutter_host.so.
+# Intermediate cdylib (manual): the release target transitions this to opt + strip.
 rust_shared_library(
     name = "agentos_flutter_host_lib",
     srcs = ["src/lib.rs"],
     crate_name = "agentos_flutter_host",
     edition = "2021",
+    # Prefer no debuginfo / strip at rustc when the toolchain supports it.
+    rustc_flags = [
+        "-C",
+        "debuginfo=0",
+        "-C",
+        "strip=symbols",
+    ],
     tags = ["manual"],
     deps = [
         "@agent-os//memcontainers/hosts/wasmtime:host",
     ],
 )
 
-# Distributable library: always compilation_mode=opt (release wasmtime).
+# Distributable: always opt (+ Bazel strip=always in transition), then toolchain strip.
 host_release_shared_library(
     name = "agentos_flutter_host",
     out = "libagentos_flutter_host.so",
