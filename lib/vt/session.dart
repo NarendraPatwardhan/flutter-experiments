@@ -6,11 +6,12 @@ import 'dart:ui' show Color;
 import '../agent_os/bindings.dart' show freePtr, mallocBytes;
 import 'bindings.dart';
 import 'frame.dart';
+import 'theme.dart';
 
-/// Product defaults (Catppuccin-ish dark) when terminal theme is unset.
-const Color kVtDefaultBg = Color(0xFF1E1E2E);
-const Color kVtDefaultFg = Color(0xFFCDD6F4);
-const Color kVtDefaultCursor = Color(0xFFF5E0DC);
+/// Defaults when the terminal has no OSC/theme colors set (Ghostty-like dark).
+const Color kVtDefaultBg = VtTheme.background;
+const Color kVtDefaultFg = VtTheme.foreground;
+const Color kVtDefaultCursor = VtTheme.cursor;
 
 /// Owns a Ghostty terminal + render state. Not thread-safe — call from one isolate.
 class GhosttyVtSession {

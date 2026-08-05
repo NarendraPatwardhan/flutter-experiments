@@ -1,5 +1,7 @@
 import 'dart:ui' show Color;
 
+import 'theme.dart';
+
 /// One screen cell for Flutter painting (owned Dart snapshot, no FFI).
 class VtCell {
   const VtCell({
@@ -68,8 +70,8 @@ class VtFrame {
       cols: cols,
       rows: rows,
       cells: List<VtCell>.filled(cols * rows, const VtCell()),
-      background: const Color(0xFF1E1E2E),
-      foreground: const Color(0xFFCDD6F4),
+      background: VtTheme.background,
+      foreground: VtTheme.foreground,
     );
   }
 }

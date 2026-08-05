@@ -3,13 +3,15 @@ import 'dart:typed_data';
 
 import 'package:flutter/material.dart';
 import 'package:flutter/scheduler.dart';
-
 import 'agent_os/vm.dart';
 import 'vt/frame.dart';
+import 'vt/metrics.dart';
 import 'vt/painter.dart';
 import 'vt/session.dart';
+import 'vt/theme.dart';
 
 void main() {
+  WidgetsFlutterBinding.ensureInitialized();
   runApp(const App());
 }
 
@@ -19,14 +21,20 @@ class App extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     return MaterialApp(
-      title: 'Flutter AgentOS Host',
+      title: 'AgentOS',
       debugShowCheckedModeBanner: false,
       theme: ThemeData(
-        colorScheme: ColorScheme.fromSeed(
-          seedColor: Colors.teal,
-          brightness: Brightness.dark,
+        brightness: Brightness.dark,
+        scaffoldBackgroundColor: VtTheme.chromeBg,
+        colorScheme: const ColorScheme.dark(
+          surface: VtTheme.chromeBg,
+          onSurface: VtTheme.chromeFg,
+          primary: VtTheme.chromeAccent,
+          onPrimary: Color(0xFF0A0A0A),
+          outline: VtTheme.chromeBorder,
         ),
         useMaterial3: true,
+        fontFamily: 'monospace',
       ),
       home: const HomePage(),
     );
@@ -41,10 +49,15 @@ class HomePage extends StatefulWidget {
 }
 
 class _HomePageState extends State<HomePage> {
-  String _status = 'Starting AgentOS + libghostty-vt…';
-  VtFrame _frame = VtFrame.empty(cols: 80, rows: 28);
+  String _status = 'starting…';
+  VtFrame _frame = VtFrame.empty(cols: 80, rows: 24);
+  VtMetrics _metrics = VtMetrics.measure(fontSize: 14);
+  EdgeInsets _gridPadding = const EdgeInsets.all(8);
   bool _busy = true;
+  bool _focused = true;
   GhosttyVtSession? _vt;
+  int _layoutCols = 80;
+  int _layoutRows = 24;
 
   @override
   void initState() {
@@ -124,10 +137,8 @@ class _HomePageState extends State<HomePage> {
   }
 
   void _vtBanner(GhosttyVtSession vt, String title) {
-    // Dim separator via SGR, then bold title.
     vt.writeText(
-      '\r\n\x1b[90m────────────────────────────────────────\x1b[0m\r\n'
-      '\x1b[1;36m$title\x1b[0m\r\n',
+      '\r\n\x1b[90m── \x1b[0m\x1b[1m$title\x1b[0m\r\n',
     );
   }
 
@@ -136,60 +147,93 @@ class _HomePageState extends State<HomePage> {
     vt.writeGuest(data);
   }
 
+  void _onSurfaceLayout(Size size) {
+    final fit = _metrics.fit(size);
+    if (fit.cols == _layoutCols &&
+        fit.rows == _layoutRows &&
+        fit.padding == _gridPadding) {
+      return;
+    }
+    setState(() {
+      _layoutCols = fit.cols;
+      _layoutRows = fit.rows;
+      _gridPadding = fit.padding;
+    });
+    final vt = _vt;
+    if (vt != null && (vt.cols != fit.cols || vt.rows != fit.rows)) {
+      // Keep cell pixel size in sync with font metrics (Ghostty resize).
+      try {
+        vt.resize(
+          fit.cols,
+          fit.rows,
+          cellW: _metrics.cellWidth.round(),
+          cellH: _metrics.cellHeight.round(),
+        );
+        _paintVt(vt);
+      } catch (_) {
+        // Resize can fail mid-boot; ignore.
+      }
+    }
+  }
+
   Future<void> _runSession() async {
     _vt?.close();
     _vt = null;
 
     setState(() {
       _busy = true;
-      _status = 'Looking for native assets…';
-      _frame = VtFrame.empty(cols: 80, rows: 28);
+      _status = 'looking for assets…';
+      _frame = VtFrame.empty(cols: _layoutCols, rows: _layoutRows);
     });
 
     try {
       final assets = _locateAssets();
       if (assets == null) {
         setState(() {
-          _status =
-              'Native assets missing.\n'
-              'Need lib/libagentos_flutter_host.so, data/kernel.wasm, data/loom.tar.';
+          _status = 'missing host.so / kernel.wasm / loom.tar';
           _busy = false;
         });
         return;
       }
       if (assets.vtLib == null) {
         setState(() {
-          _status =
-              'libghostty-vt.so missing under lib/. Rebuild //:linux_product_bundle.';
+          _status = 'missing libghostty-vt.so';
           _busy = false;
         });
         return;
       }
       if (assets.image == null) {
         setState(() {
-          _status =
-              'Guest image missing (data/loom.tar). Rebuild //:linux_product_bundle.';
+          _status = 'missing loom.tar';
           _busy = false;
         });
         return;
       }
-
-      setState(() => _status = 'Opening libghostty-vt…');
+      setState(() => _status = 'opening vt…');
       final vt = GhosttyVtSession.open(
         libraryPath: assets.vtLib,
-        cols: 80,
-        rows: 28,
+        cols: _layoutCols,
+        rows: _layoutRows,
+      );
+      // Pixel cell size for image protocols / size reports.
+      vt.resize(
+        _layoutCols,
+        _layoutRows,
+        cellW: _metrics.cellWidth.round(),
+        cellH: _metrics.cellHeight.round(),
       );
       _vt = vt;
 
       vt.writeText(
-        '\x1b[1;32mAgentOS · Flutter · libghostty-vt\x1b[0m\r\n'
-        'VT grid ${vt.cols}×${vt.rows}  ·  guest → vt_write → render_state\r\n',
+        '\x1b[1;32magentos\x1b[0m · flutter · libghostty-vt\r\n'
+        '\x1b[90m${vt.cols}×${vt.rows}  cell '
+        '${_metrics.cellWidth.round()}×${_metrics.cellHeight.round()}px'
+        '  ${_metrics.fontFamily}\x1b[0m\r\n',
       );
       _paintVt(vt);
 
       final imageName = assets.image!.split(Platform.pathSeparator).last;
-      setState(() => _status = 'Booting kernel + $imageName…');
+      setState(() => _status = 'boot $imageName…');
       final vm = await AgentOsVm.bootFromFiles(
         kernelPath: assets.kernel,
         imagePath: assets.image,
@@ -203,19 +247,19 @@ class _HomePageState extends State<HomePage> {
           }
         }
         final bootBytes = await vm.takeOutput();
-        _vtBanner(vt, 'shell after boot ($imageName)');
+        _vtBanner(vt, 'boot ($imageName)');
         if (bootBytes.isEmpty) {
-          vt.writeText('(no capture yet — shell may be quiet)\r\n');
+          vt.writeText('\x1b[90m(quiet shell)\x1b[0m\r\n');
         } else {
           _vtWriteOutput(vt, bootBytes);
         }
         _paintVt(vt);
 
-        setState(() => _status = 'Running guest commands…');
+        setState(() => _status = 'running…');
 
         Future<void> runCmd(String cmd) async {
           final r = await vm.exec(cmd);
-          _vtBanner(vt, '$cmd  (exit ${r.exitCode})');
+          _vtBanner(vt, '$cmd  ·  ${r.exitCode}');
           _vtWriteOutput(vt, r.stdout);
           if (r.stderr.isNotEmpty) {
             vt.writeText('\x1b[31m');
@@ -229,32 +273,25 @@ class _HomePageState extends State<HomePage> {
         await runCmd('uname -a');
         await runCmd('ls /bin | head -n 20');
 
-        // Demo styled VT that never came from the guest.
-        _vtBanner(vt, 'VT style check');
+        _vtBanner(vt, 'style');
         vt.writeText(
           'plain  \x1b[1mbold\x1b[0m  \x1b[32mgreen\x1b[0m  '
-          '\x1b[38;2;255;128;0morange\x1b[0m  \x1b[4munderline\x1b[0m\r\n',
+          '\x1b[38;2;255;160;60morange\x1b[0m  \x1b[4munderline\x1b[0m\r\n',
         );
         _paintVt(vt);
 
-        setState(() {
-          _status =
-              'OK — guest ran through VT (${vt.cols}×${vt.rows} cells painted)';
-        });
+        setState(() => _status = 'ok  ${vt.cols}×${vt.rows}');
       } finally {
         await vm.close();
       }
     } catch (e, st) {
-      // Surface error both in status and (if VT up) on the grid.
-      final msg = 'Error: $e';
+      final msg = 'error: $e';
       try {
         _vt?.writeText('\r\n\x1b[1;31m$msg\x1b[0m\r\n');
         _vt?.writeText(st.toString());
         if (_vt != null) _paintVt(_vt!);
       } catch (_) {}
-      setState(() {
-        _status = msg;
-      });
+      setState(() => _status = msg);
     } finally {
       if (mounted) setState(() => _busy = false);
     }
@@ -262,49 +299,100 @@ class _HomePageState extends State<HomePage> {
 
   @override
   Widget build(BuildContext context) {
-    final theme = Theme.of(context);
-    return Scaffold(
-      body: Padding(
-        padding: const EdgeInsets.all(16),
-        child: Column(
+    return Focus(
+      autofocus: true,
+      onFocusChange: (v) => setState(() => _focused = v),
+      child: Scaffold(
+        backgroundColor: VtTheme.background,
+        body: Column(
           crossAxisAlignment: CrossAxisAlignment.stretch,
           children: [
-            Text(
-              'AgentOS on Flutter',
-              style: theme.textTheme.headlineMedium,
-            ),
-            const SizedBox(height: 4),
-            Text(
-              'Native host · loom guest · libghostty-vt paint path',
-              style: theme.textTheme.bodyMedium?.copyWith(
-                color: theme.colorScheme.onSurfaceVariant,
-              ),
-            ),
-            const SizedBox(height: 12),
-            if (_busy) const LinearProgressIndicator(),
-            if (!_busy)
-              Align(
-                alignment: Alignment.centerLeft,
-                child: FilledButton(
-                  onPressed: _runSession,
-                  child: const Text('Run again'),
+            // Thin status strip — not a Material marketing header.
+            Container(
+              height: 28,
+              padding: const EdgeInsets.symmetric(horizontal: 10),
+              decoration: const BoxDecoration(
+                color: VtTheme.chromeBg,
+                border: Border(
+                  bottom: BorderSide(color: VtTheme.chromeBorder, width: 1),
                 ),
               ),
-            const SizedBox(height: 8),
-            Text(_status, style: theme.textTheme.bodyLarge),
-            const SizedBox(height: 12),
-            Expanded(
-              child: ClipRRect(
-                borderRadius: BorderRadius.circular(8),
-                child: DecoratedBox(
-                  decoration: BoxDecoration(
-                    border: Border.all(
-                      color: theme.colorScheme.outlineVariant,
+              child: Row(
+                children: [
+                  Text(
+                    'agentos',
+                    style: TextStyle(
+                      fontFamily: _metrics.fontFamily,
+                      fontFamilyFallback: VtMetrics.fontFamilyFallback,
+                      fontSize: 12,
+                      fontWeight: FontWeight.w600,
+                      color: VtTheme.chromeAccent,
+                      height: 1,
                     ),
-                    borderRadius: BorderRadius.circular(8),
                   ),
-                  child: VtView(frame: _frame, fontSize: 12),
-                ),
+                  const SizedBox(width: 10),
+                  Expanded(
+                    child: Text(
+                      _status,
+                      maxLines: 1,
+                      overflow: TextOverflow.ellipsis,
+                      style: TextStyle(
+                        fontFamily: _metrics.fontFamily,
+                        fontFamilyFallback: VtMetrics.fontFamilyFallback,
+                        fontSize: 12,
+                        color: VtTheme.chromeFg,
+                        height: 1,
+                      ),
+                    ),
+                  ),
+                  if (_busy)
+                    const SizedBox(
+                      width: 12,
+                      height: 12,
+                      child: CircularProgressIndicator(
+                        strokeWidth: 1.5,
+                        color: VtTheme.chromeDim,
+                      ),
+                    )
+                  else
+                    TextButton(
+                      onPressed: _runSession,
+                      style: TextButton.styleFrom(
+                        foregroundColor: VtTheme.chromeDim,
+                        padding: const EdgeInsets.symmetric(horizontal: 8),
+                        minimumSize: const Size(0, 24),
+                        tapTargetSize: MaterialTapTargetSize.shrinkWrap,
+                      ),
+                      child: Text(
+                        'rerun',
+                        style: TextStyle(
+                          fontFamily: _metrics.fontFamily,
+                          fontSize: 12,
+                          height: 1,
+                        ),
+                      ),
+                    ),
+                ],
+              ),
+            ),
+            Expanded(
+              child: LayoutBuilder(
+                builder: (context, constraints) {
+                  // Defer layout→resize to after frame to avoid setState during build.
+                  final size = Size(
+                    constraints.maxWidth,
+                    constraints.maxHeight,
+                  );
+                  WidgetsBinding.instance.addPostFrameCallback((_) {
+                    if (mounted) _onSurfaceLayout(size);
+                  });
+                  return VtView(
+                    frame: _frame,
+                    metrics: _metrics,
+                    padding: _gridPadding,
+                    focused: _focused,
+                  );
+                },
               ),
             ),
           ],
