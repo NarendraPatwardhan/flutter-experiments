@@ -26,9 +26,12 @@ build --sandbox_add_mount_pair=/tmp
 build --sandbox_add_mount_pair=/home
 common --copt=-w
 common --host_copt=-w
-# ZigBuildExe CacheCheckFailed races when many remote workers share /tmp/zig-cache.
-# Run Zig compile on the BuildBuddy runner FS (still zero agent-host analysis).
+# ZigBuildExe: keep on the BB runner FS (not RBE workers). Shared remote /tmp zig
+# caches produce CacheCheckFailed under high parallelism.
 build --modify_execution_info=ZigBuildExe=+no-remote,ZigBuildLib=+no-remote,ZigBuildTest=+no-remote
+# Fresh zig cache dir per Bazel server start; avoids poisoned entries from bad -include runs.
+build --action_env=ZIG_GLOBAL_CACHE_DIR=/tmp/zig-cache-agentos-flutter
+build --action_env=ZIG_LOCAL_CACHE_DIR=/tmp/zig-cache-agentos-flutter
 
 build --verbose_failures
 
