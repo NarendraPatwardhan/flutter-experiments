@@ -46,8 +46,8 @@ chmod +x dist/linux/flutter_bazel_hello
 cd dist/linux && ./flutter_bazel_hello
 ```
 
-On launch the app boots **kernel + loom**, runs guest commands, and shows the output.
-Assets: `lib/libagentos_flutter_host.so`, `data/kernel.wasm`, `data/loom.tar`.
+On launch the app boots **kernel + loom** and a **libghostty-vt** live session (tick → VT → paint; keys/paste → guest).
+Assets: `lib/libagentos_flutter_host.so`, `lib/libghostty-vt.so`, `data/kernel.wasm`, `data/loom.tar`.
 
 `dist/`, `bb-out/`, and `*.tar.gz` are **local artifacts only** — never commit them.
 

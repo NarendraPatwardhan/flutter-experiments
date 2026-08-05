@@ -466,7 +466,7 @@ When expanded and “good enough” for product:
 | T6 | FS, svc_call; catalog inject | **Done** — catalog blob is UTF-8 JSON → `inject_catalog` |
 | T7 | perf_* | **Done** |
 
-Dart: `lib/agent_os/bindings.dart` + `vm.dart` bind the full header. Product UI still uses the T0 smoke path for the live terminal loop (session tick/drain/send is a UI wiring task, not an ABI gap).
+Dart: `lib/agent_os/bindings.dart` + `vm.dart` bind the full header. The live product session (`lib/session/product_session.dart`) uses the PTY subset (boot, tick_n, take_output, send_input, status, close). Relay, snapshots, jobs, FS, and related calls are available in Dart and not yet product-wired. That is session depth, not an ABI gap.
 
 ## 10. Bottom line
 
