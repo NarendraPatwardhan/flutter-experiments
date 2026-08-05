@@ -1,18 +1,28 @@
 load("@rules_rust//rust:defs.bzl", "rust_shared_library")
+load(":defs.bzl", "host_release_shared_library")
 
 package(default_visibility = ["//visibility:public"])
 
 exports_files(["include/agentos_flutter_host.h"])
 
-# Product C ABI over @agent-os KernelHost (not the BEAM Rustler NIF).
+# Intermediate cdylib (manual): the release target transitions this to opt.
+# Leaving both as default //... names would collide on libagentos_flutter_host.so.
 rust_shared_library(
-    name = "agentos_flutter_host",
+    name = "agentos_flutter_host_lib",
     srcs = ["src/lib.rs"],
     crate_name = "agentos_flutter_host",
     edition = "2021",
+    tags = ["manual"],
     deps = [
         "@agent-os//memcontainers/hosts/wasmtime:host",
     ],
+)
+
+# Distributable library: always compilation_mode=opt (release wasmtime).
+host_release_shared_library(
+    name = "agentos_flutter_host",
+    out = "libagentos_flutter_host.so",
+    lib = ":agentos_flutter_host_lib",
 )
 
 filegroup(

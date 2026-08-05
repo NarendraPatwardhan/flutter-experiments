@@ -54,6 +54,13 @@ Flutter UI
 3. UI isolate only receives messages/streams.  
 4. Host-call policy (later) lives in Dart, not in the kernel.
 
+## Build mode and size
+
+- `//native/agentos_flutter_host:agentos_flutter_host` is always **`compilation_mode=opt`** (same idea as AgentOS `host_nif_release` / `mc`).
+- `//:agentos_native_bundle` **strips** the staged `.so` (`strip --strip-unneeded`).
+- Do not ship a fastbuild/debug wasmtime host — it is larger and much slower to boot.
+- Most remaining size is wasmtime + TLS inside `@agent-os` `host`, not the thin C ABI.
+
 ## Later (same model)
 
 `exec` / `svc_call` / snapshot / `relay_next` + respond — mirror NIF surface as needed for the terminal product.
