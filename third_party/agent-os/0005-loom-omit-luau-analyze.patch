@@ -1,0 +1,14 @@
+diff --git a/memcontainers/images/BUILD.bazel b/memcontainers/images/BUILD.bazel
+index b2589bc..4746081 100644
+--- a/memcontainers/images/BUILD.bazel
++++ b/memcontainers/images/BUILD.bazel
+@@ -175,7 +175,8 @@ pkg_tar(
+     ],
+     files = {
+         "//memcontainers/programs/luau/glue:luau": "/bin/luau",
+-        "//memcontainers/programs/luau/glue:luau-analyze": "/bin/luau-analyze",
++        # Product pin: omit luau-analyze — zig c++ Analysis build fails under nested
++        # @agent-os+ (CacheCheckFailed). Interpreter /bin/luau is enough for loom shell.
+         # The agent-facing skill docs ride the flavor (not the binary) — luau + the doc generators.
+         "//memcontainers/programs/luau/skills:luau.md": "/skills/luau.md",
+         "//memcontainers/programs/luau/skills:docx.md": "/skills/docx.md",

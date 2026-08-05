@@ -5,4 +5,5 @@ exports_files([
     "0002-tree-sitter-load-agent-os.patch",
     "0003-luau-include-external-root.patch",
     "0004-sqlite-1mib-stack.patch",
+    "0005-loom-omit-luau-analyze.patch",
 ])
