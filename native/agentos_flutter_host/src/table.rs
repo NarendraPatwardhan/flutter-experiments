@@ -171,18 +171,6 @@ pub fn with_host_mut<R>(
     })
 }
 
-pub fn take_merged_output(entry: &Vm) -> Vec<u8> {
-    let mut out = Vec::new();
-    for arc in [&entry.out, &entry.out_stdout, &entry.out_stderr, &entry.out_log] {
-        if let Ok(mut g) = arc.lock() {
-            out.extend_from_slice(&g);
-            g.clear();
-        }
-    }
-    // Prefer primary out sink (legacy combined).
-    out
-}
-
 pub fn drain_arc(arc: &Arc<Mutex<Vec<u8>>>) -> Vec<u8> {
     match arc.lock() {
         Ok(mut g) => {
@@ -192,14 +180,4 @@ pub fn drain_arc(arc: &Arc<Mutex<Vec<u8>>>) -> Vec<u8> {
         }
         Err(_) => Vec::new(),
     }
-}
-
-pub fn c_err(msg: impl Into<String>) -> i32 {
-    set_error(msg);
-    -1
-}
-
-pub fn c_ok() -> i32 {
-    clear_error();
-    0
 }
