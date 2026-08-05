@@ -192,7 +192,10 @@ zig_shared_library(
     name = "libghostty_vt",
     main = "@ghostty//:src/lib_vt.zig",
     srcs = ["@ghostty//:zig_srcs"],
-    extra_srcs = ["@ghostty//:headers"],
+    extra_srcs = [
+        "@ghostty//:headers",
+        "@ghostty//:embed_files",
+    ],
     deps = [
         ":build_options",
         ":terminal_options",
@@ -201,4 +204,5 @@ zig_shared_library(
         ":symbols_tables",
     ],
     shared_lib_name = "libghostty-vt.so",
+    zigopts = ["-OReleaseFast"],
 )

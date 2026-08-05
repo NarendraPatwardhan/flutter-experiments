@@ -35,3 +35,16 @@ filegroup(
     srcs = glob(["include/ghostty/**/*.h"]),
     visibility = ["//visibility:public"],
 )
+
+# @embedFile assets (rgb.txt, fonts, etc.) needed by src/**/*.zig
+filegroup(
+    name = "embed_files",
+    srcs = glob(
+        [
+            "src/**/res/**",
+            "pkg/**/res/**",
+        ],
+        allow_empty = True,
+    ),
+    visibility = ["//visibility:public"],
+)
