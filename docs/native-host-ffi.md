@@ -40,7 +40,7 @@ Flutter UI
 
 | C | Role |
 |---|------|
-| `aos_vm_boot` | Boot from kernel + optional base image tar (posix); tick to prompt |
+| `aos_vm_boot` | Boot from kernel + optional base image tar (loom); tick to prompt |
 | `aos_vm_tick` | One fuel quantum; state runnable/waiting/exited |
 | `aos_vm_send_input` | Terminal input bytes |
 | `aos_vm_take_output` | Drain capture buffer |

@@ -38,7 +38,7 @@ class HomePage extends StatefulWidget {
 }
 
 class _HomePageState extends State<HomePage> {
-  String _status = 'Starting AgentOS (posix guest)…';
+  String _status = 'Starting AgentOS (loom guest)…';
   String _output = '';
   bool _busy = true;
 
@@ -58,12 +58,11 @@ class _HomePageState extends State<HomePage> {
       '$exeDir/data/kernel.wasm',
       '$exeDir/kernel.wasm',
     ];
-    // Prefer posix; accept loom.tar if present (future).
     final imageCandidates = [
-      '$exeDir/data/posix.tar',
       '$exeDir/data/loom.tar',
-      '$exeDir/posix.tar',
+      '$exeDir/data/posix.tar',
       '$exeDir/loom.tar',
+      '$exeDir/posix.tar',
     ];
     String? libPath;
     String? kernelPath;
@@ -102,7 +101,7 @@ class _HomePageState extends State<HomePage> {
         setState(() {
           _status =
               'Native assets missing.\n'
-              'Need lib/libagentos_flutter_host.so, data/kernel.wasm, data/posix.tar.';
+              'Need lib/libagentos_flutter_host.so, data/kernel.wasm, data/loom.tar.';
           _busy = false;
         });
         return;
@@ -110,7 +109,7 @@ class _HomePageState extends State<HomePage> {
       if (assets.image == null) {
         setState(() {
           _status =
-              'Guest image missing (data/posix.tar). Rebuild //:linux_product_bundle.';
+              'Guest image missing (data/loom.tar). Rebuild //:linux_product_bundle.';
           _busy = false;
         });
         return;
@@ -191,7 +190,7 @@ class _HomePageState extends State<HomePage> {
             ),
             const SizedBox(height: 8),
             Text(
-              'Native host · kernel + posix guest image · auto-runs on launch',
+              'Native host · kernel + loom guest image · auto-runs on launch',
               style: theme.textTheme.bodyMedium?.copyWith(
                 color: theme.colorScheme.onSurfaceVariant,
               ),

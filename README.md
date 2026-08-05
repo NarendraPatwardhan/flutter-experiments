@@ -14,12 +14,12 @@ AgentOS is **not** vendored and **not** a `local_path_override`. Root `MODULE.ba
 
 | Target | Purpose |
 |--------|---------|
-| `//:linux_product_bundle` | **Ship tree** — app + host `.so` + `kernel.wasm` + `posix.tar` |
+| `//:linux_product_bundle` | **Ship tree** — app + host `.so` + `kernel.wasm` + `loom.tar` |
 | `//:app.linux` | Flutter Linux app only |
-| `//:agentos_native_bundle` | `kernel.wasm` + `posix.tar` + host `.so` |
+| `//:agentos_native_bundle` | `kernel.wasm` + `loom.tar` + host `.so` |
 | `//:agentos_flutter_host` | Opt + genrule-stripped C ABI host |
 | `//:agentos_kernel` | Kernel wasm from pin |
-| `//:agentos_posix` | Posix guest image (shell + coreutils) from pin |
+| `//:agentos_loom` | Loom guest image from pin |
 
 ## Build (zero local analysis)
 
@@ -46,10 +46,8 @@ chmod +x dist/linux/flutter_bazel_hello
 cd dist/linux && ./flutter_bazel_hello
 ```
 
-On launch the app boots **kernel + posix guest image**, runs guest commands, and shows the output.
-Assets: `lib/libagentos_flutter_host.so`, `data/kernel.wasm`, `data/posix.tar`.
-
-(Loom = posix + Luau; Luau still fails under nested `@agent-os` zig compile — posix is the working shell image.)
+On launch the app boots **kernel + loom**, runs guest commands, and shows the output.
+Assets: `lib/libagentos_flutter_host.so`, `data/kernel.wasm`, `data/loom.tar`.
 
 `dist/`, `bb-out/`, and `*.tar.gz` are **local artifacts only** — never commit them.
 

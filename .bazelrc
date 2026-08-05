@@ -26,6 +26,9 @@ build --sandbox_add_mount_pair=/tmp
 build --sandbox_add_mount_pair=/home
 common --copt=-w
 common --host_copt=-w
+# ZigBuildExe CacheCheckFailed races when many remote workers share /tmp/zig-cache.
+# Run Zig compile on the BuildBuddy runner FS (still zero agent-host analysis).
+build --modify_execution_info=ZigBuildExe=+no-remote,ZigBuildLib=+no-remote,ZigBuildTest=+no-remote
 
 build --verbose_failures
 
