@@ -2,6 +2,8 @@
 /bazel-*
 .bazel-output/
 MODULE.bazel.lock.bak
+/execution.json
+/bep.json
 
 # Flutter / Dart local tooling (Bazel owns the hermetic SDK)
 .dart_tool/
