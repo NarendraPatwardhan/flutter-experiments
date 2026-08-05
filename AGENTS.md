@@ -4,8 +4,11 @@
 
 ```bash
 git push origin HEAD
-bb remote build --run_from_branch=main //:app.web
-bb remote test  --run_from_branch=main //:widget_test
+bb remote --run_from_branch=main --os=linux build //:app.web
+# Stage for local serve (download only — not local compile):
+rm -rf dist/web && mkdir -p dist/web
+cp -a bb-out/bazel-out/k8-fastbuild/bin/app.web_build_artifacts/. dist/web/
+python3 -m http.server 8080 --directory dist/web
 ```
 
 | Command | Allowed? |

@@ -4,7 +4,9 @@
 MODULE.bazel.lock.bak
 /execution.json
 /bep.json
-
+/bb-out/
+/dist/
+.bb-remote-invocation-id
 # Flutter / Dart local tooling (Bazel owns the hermetic SDK)
 .dart_tool/
 .packages

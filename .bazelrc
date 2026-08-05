@@ -43,7 +43,9 @@ common --remote_local_fallback=true
 common --jobs=100
 common --remote_timeout=3600
 common --remote_retries=5
-common --remote_download_minimal
+# Pull top-level outputs back to the agent so `bb remote` can stage them for local run.
+# (minimal caused CAS download failures after a successful remote build.)
+common --remote_download_toplevel
 common --remote_cache_compression
 common --remote_cache_async
 
