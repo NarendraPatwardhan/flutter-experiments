@@ -3,11 +3,34 @@ load("@rules_flutter//flutter:defs.bzl", "flutter_app", "flutter_library", "flut
 package(default_visibility = ["//visibility:public"])
 
 # ---------------------------------------------------------------------------
-# AgentOS — git-pinned module smoke (built from @agent-os, not release zips)
+# AgentOS — git-pinned module (built from @agent-os, not release zips / not JS)
 # ---------------------------------------------------------------------------
 filegroup(
     name = "agentos_kernel",
     srcs = ["@agent-os//memcontainers/kernel/rust:kernel"],
+)
+
+# Product C ABI over KernelHost + kernel wasm for staging next to the Linux app.
+alias(
+    name = "agentos_flutter_host",
+    actual = "//native/agentos_flutter_host:agentos_flutter_host",
+)
+
+genrule(
+    name = "agentos_native_bundle",
+    srcs = [
+        ":agentos_kernel",
+        ":agentos_flutter_host",
+    ],
+    outs = [
+        "agentos_native/kernel.wasm",
+        "agentos_native/libagentos_flutter_host.so",
+    ],
+    cmd = """
+set -euo pipefail
+cp $(location :agentos_kernel) $(location agentos_native/kernel.wasm)
+cp $(location :agentos_flutter_host) $(location agentos_native/libagentos_flutter_host.so)
+""",
 )
 
 flutter_library(

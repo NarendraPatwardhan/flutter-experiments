@@ -1,0 +1,21 @@
+load("@rules_rust//rust:defs.bzl", "rust_shared_library")
+
+package(default_visibility = ["//visibility:public"])
+
+exports_files(["include/agentos_flutter_host.h"])
+
+# Product C ABI over @agent-os KernelHost (not the BEAM Rustler NIF).
+rust_shared_library(
+    name = "agentos_flutter_host",
+    srcs = ["src/lib.rs"],
+    crate_name = "agentos_flutter_host",
+    edition = "2021",
+    deps = [
+        "@agent-os//memcontainers/hosts/wasmtime:host",
+    ],
+)
+
+filegroup(
+    name = "headers",
+    srcs = ["include/agentos_flutter_host.h"],
+)

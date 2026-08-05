@@ -59,6 +59,16 @@ This product is a **native** host (Flutter on Linux, later mobile).
 
 search-experience may use JS. This repository does not.
 
+### 2.5 Native FFI direction
+
+The Elixir control plane wraps **`host::KernelHost`** through a thin NIF. This product does the same for Flutter:
+
+- C ABI cdylib over `KernelHost` (`//native/agentos_flutter_host`)
+- Dart `dart:ffi` + worker isolates for long host work
+- Kernel Wasm from `@agent-os//…` (git pin)
+
+See **[docs/native-host-ffi.md](docs/native-host-ffi.md)**.
+
 ---
 
 ## 3. System shape
@@ -222,8 +232,8 @@ Do not keep a second “old approach” tree in this repository. One product tre
 |-------|---------|
 | **A — Host proven** | rules_flutter Linux app builds on BuildBuddy; runs from `dist/linux`. **Done.** |
 | **B — Repo clean** | Only the Bazel remote approach remains; docs match practice. **Done.** |
-| **C — AgentOS pin** | `git_override` pin + patches; root hermetic_cc; `//:agentos_kernel` builds on BuildBuddy. |
-| **D — Runtime assets** | Product packages needed AgentOS runtime outputs with the host. |
+| **C — AgentOS pin** | `git_override` pin + patches; root hermetic_cc; `//:agentos_kernel` builds on BuildBuddy. **Done.** |
+| **D — Native FFI host** | C ABI over `KernelHost` + Dart FFI; stage with Linux app. |
 | **E — Guest / image** | Product guests and image layers as required for the terminal computer. |
 | **F — Terminal UX** | Terminal UI (for example libghostty integration) in the Flutter host. |
 | **G — Mobile** | Same product idea on mobile platforms. |

@@ -11,13 +11,16 @@ AgentOS is **not** vendored and **not** a `local_path_override`. Root `MODULE.ba
 - Product patches under `third_party/agent-os/`
 - Root re-host of `hermetic_cc_toolchain` → `@zig_sdk` (required for nested AgentOS)
 
-Smoke target (build from the pin, not release downloads):
+Targets (build from the pin, not release downloads):
 
 ```text
-//:agentos_kernel   →  @agent-os//memcontainers/kernel/rust:kernel
+//:agentos_kernel          →  kernel.wasm
+//:agentos_flutter_host    →  libagentos_flutter_host.so (C ABI over KernelHost)
+//:agentos_native_bundle   →  both staged under agentos_native/
+//:app.linux               →  Flutter Linux app
 ```
 
-To bump AgentOS: change the `commit` in `git_override`, confirm patches still apply, then `bb remote` build `//:agentos_kernel` and `//:app.linux`.
+To bump AgentOS: change the `commit` in `git_override`, confirm patches still apply, then remote-build the targets above.
 
 ## Build (zero local analysis) + fetch for local run
 
@@ -33,7 +36,11 @@ if ! pkg-config --exists gtk+-3.0 2>/dev/null; then
   sudo apt-get update -qq
   sudo apt-get install -y -qq clang cmake ninja-build pkg-config libgtk-3-dev liblzma-dev
 fi
-bazel build //:agentos_kernel //:app.linux --remote_download_toplevel
+bazel build //:agentos_native_bundle //:app.linux --remote_download_toplevel
+# Stage native host next to the Linux bundle layout (lib/ + data/)
+mkdir -p bazel-bin/app.linux_build_artifacts/lib bazel-bin/app.linux_build_artifacts/data
+cp -f bazel-bin/agentos_native/libagentos_flutter_host.so bazel-bin/app.linux_build_artifacts/lib/
+cp -f bazel-bin/agentos_native/kernel.wasm bazel-bin/app.linux_build_artifacts/data/
 tar -C bazel-bin/app.linux_build_artifacts -czf linux_bundle.tar.gz .
 mkdir -p /home/buildbuddy/workspace/artifacts/command-0
 cp linux_bundle.tar.gz /home/buildbuddy/workspace/artifacts/command-0/

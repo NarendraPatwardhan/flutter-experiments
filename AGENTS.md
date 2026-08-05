@@ -9,7 +9,7 @@ bb remote --run_from_branch=main --os=linux --timeout=2h --script '…'
 # Stage under dist/ for local run only — never commit dist/ or *.tar.gz.
 ```
 
-Primary target: **`//:app.linux`**. AgentOS pin smoke: **`//:agentos_kernel`**. Optional: `//:app.web`, `//:widget_test`.
+Primary target: **`//:app.linux`**. AgentOS native: **`//:agentos_native_bundle`** (kernel + C ABI host). Optional: `//:app.web`, `//:widget_test`.
 
 | Command | Allowed? |
 |---------|----------|
@@ -27,6 +27,7 @@ Primary target: **`//:app.linux`**. AgentOS pin smoke: **`//:agentos_kernel`**. 
 - Patches live under `third_party/agent-os/`.
 - Root re-hosts `hermetic_cc` → `@zig_sdk`.
 - **Native host only.** Never use the AgentOS JS/browser path (`sdk-js`, `mc-core.mjs`, browserify). See SYSTEM.md §2.4.
+- FFI: C ABI over `KernelHost` (`//native/agentos_flutter_host`), not the Rustler NIF. See `docs/native-host-ffi.md`.
 
 ## Artifacts
 
