@@ -51,7 +51,8 @@ class HomePage extends StatefulWidget {
 class _HomePageState extends State<HomePage> {
   String _status = 'starting…';
   VtFrame _frame = VtFrame.empty(cols: 80, rows: 24);
-  VtMetrics _metrics = VtMetrics.measure(fontSize: 14);
+  // Re-measured after first frame so fontconfig has resolved a real mono face.
+  VtMetrics _metrics = VtMetrics.measure(fontSize: 13);
   EdgeInsets _gridPadding = const EdgeInsets.all(8);
   bool _busy = true;
   bool _focused = true;
@@ -62,7 +63,14 @@ class _HomePageState extends State<HomePage> {
   @override
   void initState() {
     super.initState();
-    SchedulerBinding.instance.addPostFrameCallback((_) => _runSession());
+    SchedulerBinding.instance.addPostFrameCallback((_) {
+      // Remeasure once the UI isolate has font fallback resolution.
+      final m = VtMetrics.measure(fontSize: 13);
+      if (mounted) {
+        setState(() => _metrics = m);
+      }
+      _runSession();
+    });
   }
 
   @override
