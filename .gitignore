@@ -7,6 +7,11 @@ MODULE.bazel.lock.bak
 /bb-out/
 /dist/
 .bb-remote-invocation-id
+
+# Build artifacts (download/stage locally — never commit)
+*.tar.gz
+linux_bundle.tar.gz
+
 # Flutter / Dart local tooling (Bazel owns the hermetic SDK)
 .dart_tool/
 .packages

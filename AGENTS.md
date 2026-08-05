@@ -1,23 +1,28 @@
 # Agent rules — zero local analysis
 
-## Only allowed build command
+## Only allowed build path
 
 ```bash
 git push origin HEAD
-bb remote --run_from_branch=main --os=linux build //:app.web
-# Stage for local serve (download only — not local compile):
-rm -rf dist/web && mkdir -p dist/web
-cp -a bb-out/bazel-out/k8-fastbuild/bin/app.web_build_artifacts/. dist/web/
-python3 -m http.server 8080 --directory dist/web
+bb remote --run_from_branch=main --os=linux --timeout=2h --script '…'
+# Fetch artifacts from the BuildBuddy invocation (bytestream / UI).
+# Stage under dist/ for local run only — never commit dist/ or *.tar.gz.
 ```
+
+Primary target: **`//:app.linux`**. Optional: `//:app.web`, `//:widget_test`.
 
 | Command | Allowed? |
 |---------|----------|
-| `bb remote build` / `bb remote test` | **Yes** — Bazel client + analysis on BuildBuddy remote runner |
-| `bb build` / `bazel build` | **No** — analysis on this host |
+| `bb remote` (+ remote script `bazel build`) | **Yes** — client + analysis on BuildBuddy runner |
+| `bb build` / `bazel build` on this host | **No** |
 | Host `flutter build` | **No** |
 
-`--run_from_branch=main` (or `--run_from_commit=<sha>`) makes the remote runner check out GitHub, not upload a local analysis tree.
+`--run_from_branch=main` (or `--run_from_commit=<sha>`) makes the remote runner check out GitHub; do not rely on uploading a local analysis tree.
+
+## Artifacts
+
+- Stage runnables under `dist/` (gitignored).
+- Do **not** commit `linux_bundle.tar.gz`, `dist/`, or `bb-out/`.
 
 ## After push
 
