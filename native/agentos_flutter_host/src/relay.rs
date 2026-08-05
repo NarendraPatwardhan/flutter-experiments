@@ -1,8 +1,19 @@
 //! Relay queues — translation of NIF BeamNet / BeamHostCall / BeamPersist.
+//!
+//! Egress frames use the contract-generated `ctl_rust::RelayEvent` wire codec
+//! (same bytes as the Elixir NIF `relay_next`). Dart should decode with that
+//! schema (`control.kdl` message `RelayEvent` id=8 version=1).
 
 use std::sync::{Arc, Mutex};
 
-use host::{HostCallCapability, KernelHostBuilder, NetCapability, PersistCapability};
+use ctl_rust::RelayEvent as WireRelayEvent;
+use host::{
+    derive_connection_origins, ConnectionCredential, ConnectionPolicyAction, ConnectionPolicyOwner,
+    ConnectionPolicyRule, ConnectionRegistry, HostCallCapability, KernelHostBuilder,
+    NetCapability, PersistCapability, RealNet, ToolApprovalDecision as HostToolApprovalDecision,
+    ToolApprovalFacts, ToolApprover,
+};
+use json::{parse as json_parse, Json};
 
 use crate::buf::{fill_buf, AosBuf};
 use crate::error::{clear_error, set_error};
@@ -13,41 +24,231 @@ use crate::table::{
 
 const WS_SEND_MARK: usize = 256 * 1024;
 
-/// net/host_call/persist: 0=deny (builder default), 1=relay. net=2 real unsupported.
+/// Must match `sidecar_rust::SIDECAR_HOST_BINDING` / `sidecar.gen.rs`.
+const SIDECAR_HOST_BINDING: &str = "mc.sidecar";
+
+/// net/host_call/persist: 0=deny (builder default), 1=relay, 2=real net (net only).
 pub fn apply_boot_caps(
     mut builder: KernelHostBuilder,
     net: i32,
     host_call: i32,
     host_call_sidecar_only: bool,
     persist: i32,
-    _tool_approval: i32,
-    _connections: Option<Vec<u8>>,
-    _policies: Option<Vec<u8>>,
+    tool_approval: i32,
+    connections: Option<Vec<u8>>,
+    policies: Option<Vec<u8>>,
     relay: &Arc<Mutex<RelayState>>,
 ) -> Result<KernelHostBuilder, String> {
-    if net == 2 {
-        return Err(
-            "AOS_NET_REAL not supported in flutter host yet (use DENY or RELAY)".into(),
-        );
+    match net {
+        0 => {
+            if connections.as_ref().is_some_and(|b| !b.is_empty())
+                || policies.as_ref().is_some_and(|b| !b.is_empty())
+                || tool_approval != 0
+            {
+                return Err(
+                    "connections, connection_policies, and tool_approval require AOS_NET_REAL (net=2)"
+                        .into(),
+                );
+            }
+        }
+        1 => {
+            if connections.as_ref().is_some_and(|b| !b.is_empty())
+                || policies.as_ref().is_some_and(|b| !b.is_empty())
+            {
+                return Err(
+                    "connection credentials/policies require AOS_NET_REAL (net=2); use relay for app-owned HTTP"
+                        .into(),
+                );
+            }
+            if tool_approval != 0 {
+                return Err(
+                    "tool_approval requires AOS_NET_REAL (net=2); relay net does not run the gate"
+                        .into(),
+                );
+            }
+            builder = builder.with_net(Box::new(FlutterNet {
+                relay: relay.clone(),
+            }));
+        }
+        2 => {
+            let registry = parse_connections_blob(connections.as_deref().unwrap_or(&[]))?;
+            let rules = parse_policies_blob(policies.as_deref().unwrap_or(&[]))?;
+            let mut net = RealNet::new()
+                .with_connections(registry)
+                .with_connection_policies(rules)
+                .map_err(|e| format!("invalid connection policies: {e:#}"))?;
+            if tool_approval != 0 {
+                net = net.with_tool_approver(Arc::new(FlutterToolApprover {
+                    relay: relay.clone(),
+                }));
+            }
+            builder = builder.with_net(Box::new(net));
+        }
+        other => {
+            return Err(format!(
+                "unknown net capability {other} (0=deny, 1=relay, 2=real)"
+            ));
+        }
     }
-    if net == 1 {
-        builder = builder.with_net(Box::new(FlutterNet {
-            relay: relay.clone(),
-        }));
-    }
+
     if host_call == 1 {
         builder = builder.with_host_call(Box::new(FlutterHostCall {
             relay: relay.clone(),
             sidecar_only: host_call_sidecar_only,
         }));
+    } else if host_call != 0 {
+        return Err(format!(
+            "unknown host_call capability {host_call} (0=deny, 1=relay)"
+        ));
     }
+
     if persist == 1 {
         builder = builder.with_persist(Box::new(FlutterPersist {
             relay: relay.clone(),
         }));
+    } else if persist != 0 {
+        return Err(format!(
+            "unknown persist capability {persist} (0=deny, 1=relay)"
+        ));
     }
+
     Ok(builder)
 }
+
+// ---------- Boot JSON: connections + policies (AOS_NET_REAL) ----------
+
+/// Connections blob: JSON array of
+/// `{ "reference", "kind": "none|bearer|header|query", "a", "b", "origins": [] }`.
+fn parse_connections_blob(blob: &[u8]) -> Result<ConnectionRegistry, String> {
+    let mut registry = ConnectionRegistry::new();
+    if blob.is_empty() {
+        return Ok(registry);
+    }
+    let text = std::str::from_utf8(blob)
+        .map_err(|_| "connections_blob must be UTF-8 JSON".to_string())?;
+    let root = json_parse(text).map_err(|_| "connections_blob is not valid JSON".to_string())?;
+    let arr = root
+        .as_arr()
+        .ok_or_else(|| "connections_blob must be a JSON array".to_string())?;
+    for (i, item) in arr.iter().enumerate() {
+        let o = item
+            .as_obj()
+            .ok_or_else(|| format!("connections[{i}] must be an object"))?;
+        let reference = obj_require_str(o, "reference", i)?;
+        let kind = obj_opt_str(o, "kind").unwrap_or_else(|| "none".into());
+        let a = obj_opt_str(o, "a").unwrap_or_default();
+        let b = obj_opt_str(o, "b").unwrap_or_default();
+        let credential = build_credential(&kind, a, b)
+            .map_err(|e| format!("connections[{i}]: {e}"))?;
+        let origins = match obj_get(o, "origins") {
+            None | Some(Json::Null) => Vec::new(),
+            Some(v) => string_array(v, &format!("connections[{i}].origins"))?,
+        };
+        let origins = if origins.is_empty() {
+            derive_connection_origins(&reference)
+        } else {
+            origins
+        };
+        registry
+            .insert(reference.clone(), credential, origins)
+            .map_err(|e| format!("connections[{i}] {reference:?}: {e:?}"))?;
+    }
+    Ok(registry)
+}
+
+/// Policies blob: JSON array of `{ "owner": "org|user", "pattern", "action": "approve|require_approval|block" }`.
+fn parse_policies_blob(blob: &[u8]) -> Result<Vec<ConnectionPolicyRule>, String> {
+    if blob.is_empty() {
+        return Ok(Vec::new());
+    }
+    let text = std::str::from_utf8(blob)
+        .map_err(|_| "connection_policies_blob must be UTF-8 JSON".to_string())?;
+    let root =
+        json_parse(text).map_err(|_| "connection_policies_blob is not valid JSON".to_string())?;
+    let arr = root
+        .as_arr()
+        .ok_or_else(|| "connection_policies_blob must be a JSON array".to_string())?;
+    let mut out = Vec::with_capacity(arr.len());
+    for (i, item) in arr.iter().enumerate() {
+        let o = item
+            .as_obj()
+            .ok_or_else(|| format!("policies[{i}] must be an object"))?;
+        let owner = match obj_require_str(o, "owner", i)?.as_str() {
+            "org" => ConnectionPolicyOwner::Org,
+            "user" => ConnectionPolicyOwner::User,
+            other => {
+                return Err(format!(
+                    "policies[{i}].owner unknown {other:?} (want org|user)"
+                ))
+            }
+        };
+        let pattern = obj_require_str(o, "pattern", i)?;
+        let action = match obj_require_str(o, "action", i)?.as_str() {
+            "approve" => ConnectionPolicyAction::Approve,
+            "require_approval" => ConnectionPolicyAction::RequireApproval,
+            "block" => ConnectionPolicyAction::Block,
+            other => {
+                return Err(format!(
+                    "policies[{i}].action unknown {other:?} (want approve|require_approval|block)"
+                ))
+            }
+        };
+        out.push(ConnectionPolicyRule {
+            owner,
+            pattern,
+            action,
+        });
+    }
+    Ok(out)
+}
+
+fn build_credential(kind: &str, a: String, b: String) -> Result<ConnectionCredential, String> {
+    match kind {
+        "none" => Ok(ConnectionCredential::None),
+        "bearer" => Ok(ConnectionCredential::Bearer { token: a }),
+        "header" => Ok(ConnectionCredential::Header { name: a, value: b }),
+        "query" => Ok(ConnectionCredential::Query { name: a, value: b }),
+        other => Err(format!(
+            "unknown credential kind {other:?} (want none|bearer|header|query)"
+        )),
+    }
+}
+
+fn obj_get<'a>(obj: &'a [(String, Json)], key: &str) -> Option<&'a Json> {
+    obj.iter().find(|(k, _)| k == key).map(|(_, v)| v)
+}
+
+fn obj_opt_str(obj: &[(String, Json)], key: &str) -> Option<String> {
+    match obj_get(obj, key) {
+        Some(Json::Str(s)) if !s.is_empty() => Some(s.clone()),
+        _ => None,
+    }
+}
+
+fn obj_require_str(obj: &[(String, Json)], key: &str, i: usize) -> Result<String, String> {
+    match obj_get(obj, key) {
+        Some(Json::Str(s)) if !s.is_empty() => Ok(s.clone()),
+        Some(Json::Str(_)) => Err(format!("item[{i}].{key} must be non-empty")),
+        Some(_) => Err(format!("item[{i}].{key} must be a string")),
+        None => Err(format!("item[{i}] missing {key:?}")),
+    }
+}
+
+fn string_array(v: &Json, label: &str) -> Result<Vec<String>, String> {
+    let arr = v
+        .as_arr()
+        .ok_or_else(|| format!("{label} must be a JSON array of strings"))?;
+    let mut out = Vec::with_capacity(arr.len());
+    for (j, item) in arr.iter().enumerate() {
+        let s = item
+            .as_str()
+            .ok_or_else(|| format!("{label}[{j}] must be a string"))?;
+        out.push(s.to_string());
+    }
+    Ok(out)
+}
+
+// ---------- Relay caps ----------
 
 #[derive(Clone)]
 struct FlutterNet {
@@ -195,6 +396,44 @@ impl NetCapability for FlutterNet {
 }
 
 #[derive(Clone)]
+struct FlutterToolApprover {
+    relay: Arc<Mutex<RelayState>>,
+}
+
+impl ToolApprover for FlutterToolApprover {
+    fn approve(&self, facts: ToolApprovalFacts) -> HostToolApprovalDecision {
+        let deny = HostToolApprovalDecision {
+            allow: false,
+            remember_session: false,
+        };
+        let rx = {
+            let Ok(mut relay) = self.relay.lock() else {
+                return deny;
+            };
+            let handle = relay.alloc_handle();
+            let (tx, rx) = std::sync::mpsc::channel();
+            relay.pending_tool_approvals.insert(handle, tx);
+            relay.events.push_back(EgressRelayEvent::ToolApproval {
+                handle,
+                connection: facts.connection,
+                method: facts.method,
+                url: facts.url,
+                origin: facts.origin,
+                args_digest: facts.args_digest,
+            });
+            rx
+        };
+        match rx.recv() {
+            Ok(d) => HostToolApprovalDecision {
+                allow: d.allow,
+                remember_session: d.remember_session,
+            },
+            Err(_) => deny,
+        }
+    }
+}
+
+#[derive(Clone)]
 struct FlutterHostCall {
     relay: Arc<Mutex<RelayState>>,
     sidecar_only: bool,
@@ -202,13 +441,15 @@ struct FlutterHostCall {
 
 impl HostCallCapability for FlutterHostCall {
     fn start(&mut self, req: &[u8]) -> i32 {
-        // req is name\0body
-        let (name, body) = match req.iter().position(|&b| b == 0) {
-            Some(i) => (
-                String::from_utf8_lossy(&req[..i]).into_owned(),
-                req[i + 1..].to_vec(),
-            ),
-            None => (String::from_utf8_lossy(req).into_owned(), Vec::new()),
+        let nul = req.iter().position(|&b| b == 0).unwrap_or(req.len());
+        let name = String::from_utf8_lossy(&req[..nul]).into_owned();
+        if self.sidecar_only && name != SIDECAR_HOST_BINDING {
+            return -1;
+        }
+        let body = if nul < req.len() {
+            req[nul + 1..].to_vec()
+        } else {
+            Vec::new()
         };
         let Ok(mut relay) = self.relay.lock() else {
             return -1;
@@ -217,7 +458,7 @@ impl HostCallCapability for FlutterHostCall {
         relay.host_calls.insert(
             handle,
             HostCallSlot {
-                sidecar: self.sidecar_only,
+                sidecar: name == SIDECAR_HOST_BINDING,
                 ..Default::default()
             },
         );
@@ -373,58 +614,82 @@ impl PersistCapability for FlutterPersist {
     }
 }
 
-fn encode_event(ev: &EgressRelayEvent) -> Vec<u8> {
-    let s = match ev {
-        EgressRelayEvent::HttpRequest { handle, request } => format!(
-            "{{\"kind\":\"http\",\"handle\":{},\"request_len\":{}}}",
-            handle,
-            request.len()
-        ),
-        EgressRelayEvent::HostCall { handle, name, body } => format!(
-            "{{\"kind\":\"host_call\",\"handle\":{},\"name\":{:?},\"body_len\":{}}}",
-            handle, name, body.len()
-        ),
-        EgressRelayEvent::HostCallClose { handle, sidecar } => format!(
-            "{{\"kind\":\"host_call_close\",\"handle\":{},\"sidecar\":{}}}",
-            handle, sidecar
-        ),
+// ---------- Wire: ctl_rust::RelayEvent (NIF parity) ----------
+
+fn relay_frame(kind: &str, handle: i32) -> WireRelayEvent {
+    WireRelayEvent {
+        kind: kind.to_string(),
+        handle,
+        request: None,
+        name: None,
+        body: None,
+        key: None,
+        value: None,
+        prefix: None,
+        url: None,
+        data: None,
+        connection: None,
+        method: None,
+        origin: None,
+        args_digest: None,
+    }
+}
+
+fn wire_relay_event(relay: &mut RelayState, event: EgressRelayEvent) -> WireRelayEvent {
+    match event {
+        EgressRelayEvent::HttpRequest { handle, request } => {
+            let mut frame = relay_frame("http", handle);
+            frame.request = Some(request);
+            frame
+        }
+        EgressRelayEvent::HostCall { handle, name, body } => {
+            let mut frame = relay_frame("host_call", handle);
+            frame.name = Some(name);
+            frame.body = Some(body);
+            frame
+        }
+        EgressRelayEvent::HostCallClose { handle, sidecar } => {
+            let mut frame = relay_frame("host_call_close", handle);
+            if sidecar {
+                frame.name = Some(SIDECAR_HOST_BINDING.to_string());
+            }
+            frame
+        }
         EgressRelayEvent::PersistGet { handle, key } => {
-            format!(
-                "{{\"kind\":\"persist_get\",\"handle\":{},\"key_len\":{}}}",
-                handle,
-                key.len()
-            )
+            let mut frame = relay_frame("persist_get", handle);
+            frame.key = Some(key);
+            frame
         }
-        EgressRelayEvent::PersistPut { handle, key, value } => format!(
-            "{{\"kind\":\"persist_put\",\"handle\":{},\"key_len\":{},\"value_len\":{}}}",
-            handle,
-            key.len(),
-            value.len()
-        ),
-        EgressRelayEvent::PersistDelete { handle, key } => format!(
-            "{{\"kind\":\"persist_delete\",\"handle\":{},\"key_len\":{}}}",
-            handle,
-            key.len()
-        ),
-        EgressRelayEvent::PersistList { handle, prefix } => format!(
-            "{{\"kind\":\"persist_list\",\"handle\":{},\"prefix_len\":{}}}",
-            handle,
-            prefix.len()
-        ),
+        EgressRelayEvent::PersistPut { handle, key, value } => {
+            let mut frame = relay_frame("persist_put", handle);
+            frame.key = Some(key);
+            frame.value = Some(value);
+            frame
+        }
+        EgressRelayEvent::PersistDelete { handle, key } => {
+            let mut frame = relay_frame("persist_delete", handle);
+            frame.key = Some(key);
+            frame
+        }
+        EgressRelayEvent::PersistList { handle, prefix } => {
+            let mut frame = relay_frame("persist_list", handle);
+            frame.prefix = Some(prefix);
+            frame
+        }
         EgressRelayEvent::WsConnect { handle, url } => {
-            format!(
-                "{{\"kind\":\"ws_connect\",\"handle\":{},\"url\":{:?}}}",
-                handle, url
-            )
+            let mut frame = relay_frame("ws_connect", handle);
+            frame.url = Some(url);
+            frame
         }
-        EgressRelayEvent::WsSend { handle, data } => format!(
-            "{{\"kind\":\"ws_send\",\"handle\":{},\"data_len\":{}}}",
-            handle,
-            data.len()
-        ),
-        EgressRelayEvent::WsClose { handle } => {
-            format!("{{\"kind\":\"ws_close\",\"handle\":{}}}", handle)
+        EgressRelayEvent::WsSend { handle, data } => {
+            if let Some(slot) = relay.ws.get_mut(&handle) {
+                slot.queued_bytes = slot.queued_bytes.saturating_sub(data.len());
+            }
+            let mut frame = relay_frame("ws_send", handle);
+            frame.data = Some(data);
+            frame
         }
+        EgressRelayEvent::WsClose { handle } => relay_frame("ws_close", handle),
         EgressRelayEvent::ToolApproval {
             handle,
             connection,
@@ -432,28 +697,32 @@ fn encode_event(ev: &EgressRelayEvent) -> Vec<u8> {
             url,
             origin,
             args_digest,
-        } => format!(
-            "{{\"kind\":\"tool_approval\",\"handle\":{},\"connection\":{:?},\"method\":{:?},\"url\":{:?},\"origin\":{:?},\"args_digest\":{:?}}}",
-            handle, connection, method, url, origin, args_digest
-        ),
-    };
-    let mut out = s.into_bytes();
-    out.push(0);
-    match ev {
-        EgressRelayEvent::HttpRequest { request, .. } => out.extend_from_slice(request),
-        EgressRelayEvent::HostCall { body, .. } => out.extend_from_slice(body),
-        EgressRelayEvent::PersistGet { key, .. }
-        | EgressRelayEvent::PersistDelete { key, .. } => out.extend_from_slice(key),
-        EgressRelayEvent::PersistPut { key, value, .. } => {
-            out.extend_from_slice(&(key.len() as u32).to_le_bytes());
-            out.extend_from_slice(key);
-            out.extend_from_slice(value);
+        } => {
+            let mut frame = relay_frame("tool_approval", handle);
+            frame.connection = Some(connection);
+            frame.method = Some(method);
+            frame.url = Some(url);
+            frame.origin = Some(origin);
+            frame.args_digest = args_digest;
+            frame
         }
-        EgressRelayEvent::PersistList { prefix, .. } => out.extend_from_slice(prefix),
-        EgressRelayEvent::WsSend { data, .. } => out.extend_from_slice(data),
-        _ => {}
     }
-    out
+}
+
+fn dispatch_relay_event(relay: &mut RelayState, event: EgressRelayEvent) -> Vec<u8> {
+    if let EgressRelayEvent::HostCall { handle, .. } = &event {
+        if let Some(slot) = relay.host_calls.get_mut(handle) {
+            slot.dispatched = true;
+        }
+    }
+    wire_relay_event(relay, event).encode()
+}
+
+fn is_sidecar_event(event: &EgressRelayEvent) -> bool {
+    matches!(
+        event,
+        EgressRelayEvent::HostCall { name, .. } if name == SIDECAR_HOST_BINDING
+    ) || matches!(event, EgressRelayEvent::HostCallClose { sidecar: true, .. })
 }
 
 fn pop_event(vm: u64, sidecar_only: bool) -> Result<Option<Vec<u8>>, String> {
@@ -463,20 +732,17 @@ fn pop_event(vm: u64, sidecar_only: bool) -> Result<Option<Vec<u8>>, String> {
             .lock()
             .map_err(|_| "relay lock poisoned".to_string())?;
         if sidecar_only {
-            let pos = relay.events.iter().position(|e| {
-                matches!(
-                    e,
-                    EgressRelayEvent::HostCall { handle, .. }
-                        if relay.host_calls.get(handle).map(|s| s.sidecar).unwrap_or(false)
-                )
-            });
+            let pos = relay.events.iter().position(is_sidecar_event);
             if let Some(i) = pos {
                 let ev = relay.events.remove(i).unwrap();
-                return Ok(Some(encode_event(&ev)));
+                return Ok(Some(dispatch_relay_event(&mut relay, ev)));
             }
             return Ok(None);
         }
-        Ok(relay.events.pop_front().map(|ev| encode_event(&ev)))
+        Ok(relay
+            .events
+            .pop_front()
+            .map(|ev| dispatch_relay_event(&mut relay, ev)))
     })
 }
 
@@ -579,7 +845,7 @@ pub unsafe extern "C" fn aos_vm_relay_host_call_respond(
 ) -> i32 {
     clear_error();
     if vm == 0 || handle <= 0 {
-        set_error("invalid args");
+        set_error("aos_vm_relay_host_call_respond: invalid args");
         return -1;
     }
     let result = if result_len == 0 || result.is_null() {
@@ -620,7 +886,7 @@ pub unsafe extern "C" fn aos_vm_relay_persist_respond(
 ) -> i32 {
     clear_error();
     if vm == 0 || handle <= 0 {
-        set_error("invalid args");
+        set_error("aos_vm_relay_persist_respond: invalid args");
         return -1;
     }
     let body = if body_len == 0 || body.is_null() {
@@ -660,7 +926,7 @@ pub unsafe extern "C" fn aos_vm_relay_tool_approval_respond(
 ) -> i32 {
     clear_error();
     if vm == 0 || handle <= 0 {
-        set_error("invalid args");
+        set_error("aos_vm_relay_tool_approval_respond: invalid args");
         return -1;
     }
     match with_vm(vm, |entry| {
@@ -687,6 +953,10 @@ pub unsafe extern "C" fn aos_vm_relay_tool_approval_respond(
 #[no_mangle]
 pub unsafe extern "C" fn aos_vm_relay_ws_open(vm: u64, handle: i64, ok: i32) -> i32 {
     clear_error();
+    if vm == 0 || handle <= 0 {
+        set_error("aos_vm_relay_ws_open: invalid args");
+        return -1;
+    }
     match with_vm(vm, |entry| {
         let mut relay = entry
             .relay
@@ -716,6 +986,10 @@ pub unsafe extern "C" fn aos_vm_relay_ws_push(
     len: usize,
 ) -> i32 {
     clear_error();
+    if vm == 0 || handle <= 0 {
+        set_error("aos_vm_relay_ws_push: invalid args");
+        return -1;
+    }
     let data = if len == 0 || data.is_null() {
         Vec::new()
     } else {
@@ -744,6 +1018,10 @@ pub unsafe extern "C" fn aos_vm_relay_ws_push(
 #[no_mangle]
 pub unsafe extern "C" fn aos_vm_relay_ws_close(vm: u64, handle: i64) -> i32 {
     clear_error();
+    if vm == 0 || handle <= 0 {
+        set_error("aos_vm_relay_ws_close: invalid args");
+        return -1;
+    }
     match with_vm(vm, |entry| {
         let mut relay = entry
             .relay

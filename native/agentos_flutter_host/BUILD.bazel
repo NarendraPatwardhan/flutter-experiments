@@ -13,7 +13,9 @@ rust_shared_library(
     edition = "2021",
     tags = ["manual"],
     deps = [
+        "@agent-os//memcontainers/contracts:ctl_rust",  # RelayEvent wire codec (NIF parity)
         "@agent-os//memcontainers/hosts/wasmtime:host",
+        "@agent-os//memcontainers/lib/json:lib",  # catalog / boot connection JSON
     ],
 )
 

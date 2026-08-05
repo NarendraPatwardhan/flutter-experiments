@@ -340,7 +340,7 @@ int aos_vm_relay_ws_push(
 int aos_vm_relay_ws_close(aos_vm_t vm, int64_t handle);
 ```
 
-### 4.9 Catalog and perf (later)
+### 4.9 Catalog and perf
 
 ```c
 int aos_vm_inject_catalog(
@@ -354,6 +354,24 @@ int aos_vm_set_perf_enabled(aos_vm_t vm, int on);
 int aos_vm_scrub_perf(aos_vm_t vm);
 int aos_vm_take_command_perf(aos_vm_t vm, aos_buf_t *out_encoded);
 ```
+
+**Catalog blob** (UTF-8 JSON object):
+
+| Field | Type | Meaning |
+|-------|------|---------|
+| `tools` | `string[]` | Tool group names |
+| `host_tools` | object[] | Host-call tools: `address`, `binding_name`, optional `description`, `args_mode`, `input_schema`, `output_schema`, `annotations` |
+| `connections` | object[] | `reference`, optional `tools`, optional `spec` |
+
+`spec`: `{ "kind": "none\|bytes\|path\|url", "payload"?: string, "payload_hex"?: string, "format"?, "source_format"?, "base_url"?, "endpoint"? }`.
+
+**Status out**: JSON `{"generation":N,"digest":"…","tools":N}` or empty.
+
+**Relay frames**: `aos_vm_relay_next` returns `ctl_rust::RelayEvent` wire bytes (same as Elixir NIF), not ad-hoc JSON.
+
+**Boot connections** (`connections_blob`, only with `AOS_NET_REAL`): JSON array of `{ "reference", "kind": "none\|bearer\|header\|query", "a", "b", "origins"?: string[] }`.
+
+**Boot policies** (`connection_policies_blob`): JSON array of `{ "owner": "org\|user", "pattern", "action": "approve\|require_approval\|block" }`.
 
 ---
 
@@ -435,19 +453,19 @@ When expanded and “good enough” for product:
 
 ---
 
-## 9. Implementation status (alpha)
+## 9. Implementation status
 
 | Phase | Surface | Status |
 |-------|---------|--------|
 | T0 | boot / tick / send / take / exec / close | **Done** (compat) |
 | T1 | boot_ex, restore, take_output_ex, status, tick_n | **Done** |
 | T2 | run, exec opts, jobs, autocomplete | **Done** |
-| T3–T4 | relay queues + respond (HTTP/host_call/persist/WS) | **Done** (JSON+payload frames; REAL net not wired) |
+| T3–T4 | relay queues + respond (HTTP/host_call/persist/WS) | **Done** — frames are `ctl_rust::RelayEvent` wire (NIF parity); `AOS_NET_REAL` + connections/policies JSON + tool_approval relay |
 | T5 | snapshot*, commit_layer | **Done** |
-| T6 | FS, svc_call; catalog inject | FS/svc **Done**; catalog **stub** (blob schema TBD) |
+| T6 | FS, svc_call; catalog inject | **Done** — catalog blob is UTF-8 JSON → `inject_catalog` |
 | T7 | perf_* | **Done** |
 
-Dart: `lib/agent_os/bindings.dart` + `vm.dart` bind the full header. Product UI still uses the T0 smoke path.
+Dart: `lib/agent_os/bindings.dart` + `vm.dart` bind the full header. Product UI still uses the T0 smoke path for the live terminal loop (session tick/drain/send is a UI wiring task, not an ABI gap).
 
 ## 10. Bottom line
 

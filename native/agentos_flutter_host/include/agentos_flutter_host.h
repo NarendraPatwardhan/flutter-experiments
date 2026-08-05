@@ -1,5 +1,5 @@
 /* C ABI over AgentOS KernelHost (wasmtime). Thin adapter — not a second host.
- * Sketch: docs/aos-c-api.md. Alpha: surface may break. */
+ * See docs/aos-c-api.md and docs/native-host-ffi.md. */
 #ifndef AGENTOS_FLUTTER_HOST_H
 #define AGENTOS_FLUTTER_HOST_H
 
@@ -251,7 +251,9 @@ int aos_vm_snapshot_incremental(
 int aos_vm_commit_layer(
     aos_vm_t vm, aos_bytes_t *out_tar, aos_buf_t *out_digest_hex);
 
-/* ---- relay (pull + respond; frames are opaque length-prefixed UTF-8/JSON-ish) ---- */
+/* ---- relay (pull + respond) ----
+ * out_frame is ctl_rust RelayEvent wire bytes (control.kdl message id=8 v1),
+ * identical to the Elixir NIF relay_next binary. Empty len means no event. */
 int aos_vm_relay_next(aos_vm_t vm, aos_buf_t *out_frame);
 int aos_vm_relay_next_sidecar(aos_vm_t vm, aos_buf_t *out_frame);
 int aos_vm_relay_http_respond(
@@ -281,7 +283,9 @@ int aos_vm_relay_ws_push(
     aos_vm_t vm, int64_t handle, const uint8_t *data, size_t len);
 int aos_vm_relay_ws_close(aos_vm_t vm, int64_t handle);
 
-/* ---- catalog / perf ---- */
+/* ---- catalog / perf ----
+ * catalog_blob: UTF-8 JSON { tools, host_tools, connections } — see docs/aos-c-api.md.
+ * out_status_encoded: JSON { generation, digest, tools } or empty if none. */
 int aos_vm_inject_catalog(
     aos_vm_t vm,
     const uint8_t *compiler_wasm,

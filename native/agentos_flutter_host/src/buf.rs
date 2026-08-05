@@ -1,8 +1,5 @@
 //! Caller-owned aos_buf_t / library aos_bytes_t helpers.
 
-use std::os::raw::c_void;
-use std::slice;
-
 /// Mirrors C `aos_buf_t`.
 #[repr(C)]
 pub struct AosBuf {
@@ -130,14 +127,3 @@ pub fn parse_env_blob(blob: &[u8]) -> Result<Vec<(String, String)>, String> {
     Ok(out)
 }
 
-#[allow(dead_code)]
-pub unsafe fn slice_or_empty<'a>(p: *const u8, len: usize) -> &'a [u8] {
-    if len == 0 || p.is_null() {
-        &[]
-    } else {
-        slice::from_raw_parts(p, len)
-    }
-}
-
-#[allow(dead_code)]
-pub fn _unused_c_void(_: *mut c_void) {}

@@ -48,7 +48,7 @@ Full surface and phased design: **[aos-c-api.md](aos-c-api.md)**. Header: `nativ
 | Control | `svc_call`, FS (`read_file` … `mount`) |
 | Identity | `snapshot`, `snapshot_incremental`, `commit_layer` |
 | Relay | `relay_next` (+ sidecar) + respond family |
-| Other | `inject_catalog` (blob schema TBD), perf_* |
+| Other | `inject_catalog` (JSON catalog blob), perf_* |
 
 Ship tree: `//:linux_product_bundle` → `linux_product.tar.gz` with `lib/libagentos_flutter_host.so` and `data/kernel.wasm` next to the Flutter binary.
 

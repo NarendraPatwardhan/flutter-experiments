@@ -1,4 +1,4 @@
-//! VM handle table, shared sinks, relay state placeholder.
+//! VM handle table, shared sinks, and relay queue state.
 
 use std::collections::{HashMap, VecDeque};
 use std::sync::{Arc, Mutex, MutexGuard, OnceLock};

@@ -1,6 +1,5 @@
 //! Boot / restore — translation of NIF boot_nif / restore_nif.
 
-use std::os::raw::c_void;
 use std::sync::{Arc, Mutex};
 
 use host::{KernelHostBuilder, TickState};
@@ -122,7 +121,7 @@ unsafe fn read_opts(opts: *const AosBootOpts) -> Result<BootPlan, String> {
     plan.host_call_sidecar_only = o.host_call_sidecar_only != 0;
     plan.persist = o.persist;
     plan.tool_approval = o.tool_approval;
-    // connections blobs reserved for real-net (T4); ignore content when net != REAL
+    // connections + policies are JSON blobs consumed when net=AOS_NET_REAL (see relay.rs).
     if o.connections_len > 0 && !o.connections_blob.is_null() {
         plan.connections =
             Some(std::slice::from_raw_parts(o.connections_blob, o.connections_len).to_vec());
@@ -405,5 +404,3 @@ pub extern "C" fn aos_vm_close(vm: u64) -> i32 {
     }
 }
 
-#[allow(dead_code)]
-fn _c_void(_: *mut c_void) {}
