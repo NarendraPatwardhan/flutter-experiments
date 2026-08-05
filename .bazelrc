@@ -40,7 +40,8 @@ common --remote_local_fallback=false
 common --local_resources=cpu=0
 common --local_resources=memory=0
 # Tag every action no-local so Bazel will not schedule host execution.
-common --modify_execution_info=.* =+no-local
+# Format: Regex=+key (no spaces around =)
+common --modify_execution_info=.*=+no-local
 
 common --jobs=100
 common --remote_timeout=3600
