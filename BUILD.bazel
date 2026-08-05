@@ -17,11 +17,6 @@ flutter_test(
 )
 
 filegroup(
-    name = "web_files",
-    srcs = glob(["web/**"]),
-)
-
-filegroup(
     name = "linux_files",
     srcs = glob(
         ["linux/**"],
@@ -33,18 +28,12 @@ filegroup(
     ),
 )
 
-# Primary CI/RBE target: hermetic web.
-# Linux desktop is manual (host GTK / non-hermetic worker assumptions).
+# Primary product: Linux desktop binary/bundle.
 flutter_app(
     name = "app",
     embed = [":lib"],
     linux = {
         "srcs": [":linux_files"],
-        "mode": "debug",
-        "tags": ["manual"],
-    },
-    web = {
-        "srcs": [":web_files"],
         "mode": "release",
     },
 )

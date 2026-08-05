@@ -1,11 +1,10 @@
-"""Minimal Flutter app — rules_flutter + BuildBuddy RBE (opencascade pattern)."""
+"""Minimal Flutter Linux app — rules_flutter + bb remote (zero local analysis)."""
 
 module(
     name = "flutter_bazel_hello",
     version = "0.0.1",
 )
 
-# Not on BCR yet — pin release via git_override (commit for reproducibility).
 bazel_dep(name = "rules_flutter", version = "0.2.1")
 
 git_override(
@@ -16,10 +15,9 @@ git_override(
 
 flutter = use_extension("@rules_flutter//flutter:extensions.bzl", "flutter")
 flutter.toolchain(
-    # Match rules_flutter v0.2.1 hello_world (offline package_graph works here).
-    # 3.41.x failed on remote with package_graph.dart null check under --no-pub.
+    # 3.24.0 matches rules_flutter hello_world offline package_graph.
     flutter_version = "3.24.0",
-    precache = ["web"],
+    precache = ["linux"],
 )
 use_repo(
     flutter,
@@ -29,5 +27,4 @@ use_repo(
 
 register_toolchains("@flutter_toolchains//:all")
 
-# Discovers hosted packages from checked-in pub_deps.json (SDK-only app).
 use_extension("@rules_flutter//flutter:extensions.bzl", "pub")
