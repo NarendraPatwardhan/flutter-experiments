@@ -5,30 +5,35 @@ package(default_visibility = ["//visibility:public"])
 
 exports_files(["include/agentos_flutter_host.h"])
 
-# Intermediate cdylib (manual): the release target transitions this to opt + strip.
+# Intermediate cdylib (manual): release target transitions this to opt.
 rust_shared_library(
     name = "agentos_flutter_host_lib",
     srcs = ["src/lib.rs"],
     crate_name = "agentos_flutter_host",
     edition = "2021",
-    # Prefer no debuginfo / strip at rustc when the toolchain supports it.
-    rustc_flags = [
-        "-C",
-        "debuginfo=0",
-        "-C",
-        "strip=symbols",
-    ],
     tags = ["manual"],
     deps = [
         "@agent-os//memcontainers/hosts/wasmtime:host",
     ],
 )
 
-# Distributable: always opt (+ Bazel strip=always in transition), then toolchain strip.
+# Always compilation_mode=opt (release wasmtime). Not the shipped name — strip genrule is.
 host_release_shared_library(
-    name = "agentos_flutter_host",
-    out = "libagentos_flutter_host.so",
+    name = "agentos_flutter_host_opt",
+    out = "libagentos_flutter_host_opt.so",
     lib = ":agentos_flutter_host_lib",
+)
+
+# Post-compile strip via genrule (system strip is fine; must run after the opt .so exists).
+genrule(
+    name = "agentos_flutter_host",
+    srcs = [":agentos_flutter_host_opt"],
+    outs = ["libagentos_flutter_host.so"],
+    cmd = """
+set -euo pipefail
+cp $(location :agentos_flutter_host_opt) $@
+strip --strip-unneeded $@ 2>/dev/null || strip -s $@
+""",
 )
 
 filegroup(

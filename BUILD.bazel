@@ -16,7 +16,7 @@ alias(
     actual = "//native/agentos_flutter_host:agentos_flutter_host",
 )
 
-# Stage kernel + always-opt, toolchain-stripped host .so (strip is in the host rule).
+# Stage kernel + opt+stripped host .so (strip is //native/agentos_flutter_host genrule).
 genrule(
     name = "agentos_native_bundle",
     srcs = [

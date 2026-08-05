@@ -56,9 +56,8 @@ Flutter UI
 
 ## Build mode and size
 
-- `//native/agentos_flutter_host:agentos_flutter_host` transitions to **`compilation_mode=opt`** and **`strip=always`**.
-- The same rule runs the C++ toolchain **`strip`** action on the `.so` (not a genrule shell).
-- The rust crate also passes `-C debuginfo=0` and `-C strip=symbols` when supported.
+- Opt compile: `agentos_flutter_host_opt` (transition `compilation_mode=opt`).
+- Strip: genrule `//native/agentos_flutter_host:agentos_flutter_host` runs after that target (`strip --strip-unneeded`).
 - Do not ship a fastbuild/debug wasmtime host — it is larger and much slower to boot.
 - Most remaining size is wasmtime + TLS inside `@agent-os` `host`, not the thin C ABI.
 
