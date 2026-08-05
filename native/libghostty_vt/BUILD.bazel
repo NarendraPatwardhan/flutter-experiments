@@ -100,8 +100,9 @@ GEN=$(location :uucode_generate)
 GEN_ABS=$$(cd $$(dirname "$$GEN") && pwd)/$$(basename "$$GEN")
 cd "$$ROOT"
 "$$GEN_ABS" "$$STAGED/src/tables.zig"
-# Emit declared outs
+# Emit declared outs (genrule does not pre-create nested out dirs).
 OUTDIR=$$(dirname $(location uucode_staged/src/root.zig))
+mkdir -p "$$OUTDIR"
 cp -a "$$STAGED/src/." "$$OUTDIR/"
 """,
 )
