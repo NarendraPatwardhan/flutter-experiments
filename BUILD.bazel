@@ -1,0 +1,50 @@
+load("@rules_flutter//flutter:defs.bzl", "flutter_app", "flutter_library", "flutter_test")
+
+flutter_library(
+    name = "lib",
+    srcs = glob(["lib/**"]),
+    pubspec = "pubspec.yaml",
+    deps = [
+        "@flutter_sdk//flutter/packages/flutter",
+        "@flutter_sdk//flutter/packages/flutter_test",
+    ],
+)
+
+flutter_test(
+    name = "widget_test",
+    srcs = glob(["test/**"]),
+    embed = [":lib"],
+)
+
+filegroup(
+    name = "web_files",
+    srcs = glob(["web/**"]),
+)
+
+filegroup(
+    name = "linux_files",
+    srcs = glob(
+        ["linux/**"],
+        exclude = [
+            "linux/flutter/ephemeral/**",
+            "linux/**/CMakeFiles/**",
+            "linux/**/build/**",
+        ],
+    ),
+)
+
+# Primary CI/RBE target: hermetic web.
+# Linux desktop is manual (host GTK / non-hermetic worker assumptions).
+flutter_app(
+    name = "app",
+    embed = [":lib"],
+    linux = {
+        "srcs": [":linux_files"],
+        "mode": "debug",
+        "tags": ["manual"],
+    },
+    web = {
+        "srcs": [":web_files"],
+        "mode": "release",
+    },
+)

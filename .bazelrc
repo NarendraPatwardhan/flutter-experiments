@@ -1,0 +1,59 @@
+# ---------------------------------------------------------------------------
+# Defaults (local analysis OK; heavy spawns opt into BuildBuddy)
+# Pattern borrowed from opencascade-bazel.
+# ---------------------------------------------------------------------------
+common --enable_bzlmod
+common --enable_workspace=false
+common --enable_runfiles
+common --enable_platform_specific_config
+common --incompatible_strict_action_env
+common --incompatible_disallow_empty_glob=false
+
+# Keep Bazel output off the tight root volume (/).
+startup --output_user_root=/mnt/workspace/.cache/bazel-flutter-hello
+
+# rules_flutter → protobuf → rules_java needs a Java toolchain at analysis time.
+# Hermetic remote JDK (no host JAVA_HOME).
+common --java_runtime_version=remotejdk_21
+common --tool_java_runtime_version=remotejdk_21
+
+build --verbose_failures
+
+# ---------------------------------------------------------------------------
+# BuildBuddy (opt-in) — remote cache, RBE, BES UI.
+#
+# Offline local builds remain the default. Remote is enabled only with
+# --config=buildbuddy. Auth comes from the `bb` CLI (`bb login`); no secrets
+# in this repository.
+#
+# Remote-only: spawnable actions run on RBE (or fail). Analysis still runs on
+# the coordinator (bb/bazel process). Prefer:
+#   bb build --config=buildbuddy //:app.web
+# ---------------------------------------------------------------------------
+common:buildbuddy --bes_results_url=https://app.buildbuddy.io/invocation/
+common:buildbuddy --bes_backend=grpcs://remote.buildbuddy.io
+common:buildbuddy --remote_cache=grpcs://remote.buildbuddy.io
+common:buildbuddy --remote_executor=grpcs://remote.buildbuddy.io
+
+# Same public RBE image family as opencascade-bazel (python3 present).
+# Digest: gcr.io/flame-public/rbe-ubuntu20-04 @ 2026-07-28.
+common:buildbuddy --remote_default_exec_properties=container-image=docker://gcr.io/flame-public/rbe-ubuntu20-04@sha256:036ae8c90876fa22da9ace6f8218e614f4cd500a154fc162973fff691e72d28e
+common:buildbuddy --remote_default_exec_properties=EstimatedCPU=4
+common:buildbuddy --remote_default_exec_properties=EstimatedMemory=8GB
+common:buildbuddy --remote_default_exec_properties=EstimatedFreeDiskBytes=20GB
+common:buildbuddy --remote_default_exec_properties=default-timeout=30m
+
+# Force remote execution for spawns; no local compile fallback.
+common:buildbuddy --spawn_strategy=remote
+common:buildbuddy --strategy=remote
+common:buildbuddy --genrule_strategy=remote
+common:buildbuddy --remote_local_fallback=false
+common:buildbuddy --local_resources=cpu=0
+common:buildbuddy --local_resources=memory=0
+
+common:buildbuddy --jobs=100
+common:buildbuddy --remote_timeout=3600
+common:buildbuddy --remote_retries=5
+common:buildbuddy --remote_download_minimal
+common:buildbuddy --remote_cache_compression
+common:buildbuddy --remote_cache_async

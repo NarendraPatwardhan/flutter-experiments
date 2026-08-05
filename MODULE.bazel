@@ -1,0 +1,33 @@
+"""Minimal Flutter app — rules_flutter + BuildBuddy RBE (opencascade pattern)."""
+
+module(
+    name = "flutter_bazel_hello",
+    version = "0.0.1",
+)
+
+# Not on BCR yet — pin release via git_override (commit for reproducibility).
+bazel_dep(name = "rules_flutter", version = "0.2.1")
+
+git_override(
+    module_name = "rules_flutter",
+    remote = "https://github.com/SpencerC/rules_flutter.git",
+    commit = "dee82b2136b0b7ea56ac7735bf7c311e6458faa0",  # v0.2.1
+)
+
+flutter = use_extension("@rules_flutter//flutter:extensions.bzl", "flutter")
+flutter.toolchain(
+    flutter_version = "3.41.7",
+    # Web is the hermetic / RBE-friendly path. Linux desktop needs host GTK and
+    # is tagged manual on //:app.linux.
+    precache = ["web"],
+)
+use_repo(
+    flutter,
+    "flutter_sdk",
+    "flutter_toolchains",
+)
+
+register_toolchains("@flutter_toolchains//:all")
+
+# Discovers hosted packages from checked-in pub_deps.json (SDK-only app).
+use_extension("@rules_flutter//flutter:extensions.bzl", "pub")

@@ -1,0 +1,21 @@
+# Bazel
+/bazel-*
+.bazel-output/
+MODULE.bazel.lock.bak
+
+# Flutter / Dart local tooling (Bazel owns the hermetic SDK)
+.dart_tool/
+.packages
+.pub-cache/
+build/
+.flutter-plugins
+.flutter-plugins-dependencies
+
+# IDE
+.idea/
+*.iml
+.vscode/
+
+# OS
+.DS_Store
+*~
