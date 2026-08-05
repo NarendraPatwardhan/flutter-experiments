@@ -121,7 +121,9 @@ class VtSelectionController {
     required int kind,
     required int cellX,
     required int cellY,
-    int pointTag = kPointTagViewport,
+    /// Active-area coords match the editable grid (c-vt-selection-gesture).
+    /// Viewport fails with invalid_value on unwritten rows.
+    int pointTag = kPointTagActive,
     double surfaceX = 0,
     double surfaceY = 0,
     int columns = 80,
@@ -155,7 +157,7 @@ class VtSelectionController {
     Pointer<GhosttySelectionGestureGeometryNative>? geom;
 
     try {
-      // Resolve cell → untracked grid ref.
+      // Resolve cell → untracked grid ref (Point is by-value on the C ABI).
       point.ref
         ..tag = pointTag
         ..pad = 0
@@ -169,9 +171,12 @@ class VtSelectionController {
         ..x = 0
         ..y = 0;
 
-      final grc = _n.terminalGridRef(term.cast(), point, ref);
+      final grc = _n.terminalGridRef(term.cast(), point.ref, ref);
       if (grc != kGhosttySuccess) {
-        throw StateError('ghostty_terminal_grid_ref failed: $grc');
+        throw StateError(
+          'ghostty_terminal_grid_ref failed: $grc '
+          '(tag=$pointTag x=$cellX y=$cellY)',
+        );
       }
 
       var rc = _n.selectionGestureEventSet(

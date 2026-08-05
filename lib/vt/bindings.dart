@@ -594,11 +594,12 @@ typedef _ScrollViewport = Void Function(
 typedef _ScrollViewportDart = void Function(
     Pointer<Void> term, GhosttyScrollViewportNative beh);
 
-// GhosttyPoint is MEMORY-class (24B); pass as pointer matching SysV ABI.
+// GhosttyPoint is taken by value (same as ScrollViewport); Dart FFI lowers
+// MEMORY-class aggregates correctly when the Struct is the parameter type.
 typedef _GridRef = Int32 Function(
-    Pointer<Void> term, Pointer<GhosttyPointNative> point, Pointer<GhosttyGridRefNative> out);
+    Pointer<Void> term, GhosttyPointNative point, Pointer<GhosttyGridRefNative> out);
 typedef _GridRefDart = int Function(
-    Pointer<Void> term, Pointer<GhosttyPointNative> point, Pointer<GhosttyGridRefNative> out);
+    Pointer<Void> term, GhosttyPointNative point, Pointer<GhosttyGridRefNative> out);
 
 typedef _SelGestureNew = Int32 Function(Pointer<Void> alloc, Pointer<Pointer<Void>> out);
 typedef _SelGestureNewDart = int Function(Pointer<Void> alloc, Pointer<Pointer<Void>> out);

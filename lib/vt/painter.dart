@@ -116,7 +116,12 @@ class VtPainter extends CustomPainter {
     }
 
     // --- text + decorations ---
-    // cellW MUST equal the face advance; then N chars in a run span N·cellW.
+    //
+    // Paint **one cell at a time** at grid origin (x·cellW, y·cellH).
+    // Coalesced TextPainter runs use the face advance, which can differ from
+    // cellW (rounding, bold face, fallback fonts). At SGR style boundaries
+    // that produced a visible gap between e.g. bold "agentos" and the rest.
+    // Ghostty places each glyph by cell coordinate; we do the same.
     final baseStyle = metrics.style.copyWith(
       color: frame.foreground,
       letterSpacing: 0,
@@ -127,19 +132,14 @@ class VtPainter extends CustomPainter {
       final cellTop = origin.dy + y * cellH;
       final baselineY = cellTop + metrics.topToBaseline;
 
-      var x = 0;
-      while (x < frame.cols) {
+      for (var x = 0; x < frame.cols; x++) {
         final cell = frame.cellAt(x, y);
 
-        // Decorations still apply to empty / invisible cells with flags.
         final hasDeco = cell.underline != VtUnderline.none ||
             cell.strikethrough ||
             cell.overline;
 
-        if (cell.text.isEmpty && !hasDeco) {
-          x++;
-          continue;
-        }
+        if (cell.text.isEmpty && !hasDeco) continue;
 
         final colors = _resolveColors(cell);
         var fg = colors.fg;
@@ -156,37 +156,13 @@ class VtPainter extends CustomPainter {
           fg = frame.background;
         }
 
-        // Coalesce a same-style run of non-empty cells for mono packing.
-        // Invisible cells contribute no glyphs but still take space if we
-        // painted a run — skip them individually instead.
-        if (!cell.invisible && cell.text.isNotEmpty) {
-          final runStyle = _textStyle(baseStyle, cell, fg);
-          final buf = StringBuffer(cell.text);
-          var end = x + 1;
-          while (end < frame.cols) {
-            final next = frame.cellAt(end, y);
-            if (next.text.isEmpty || next.invisible) break;
-            final nextBlock = showCursor &&
-                cursorStyle == VtCursorStyle.block &&
-                frame.cursorX == end &&
-                frame.cursorY == y;
-            if (nextBlock) break; // block cell needs inverted ink alone
-            if (blockHere) break;
-            if (!_sameRunStyle(cell, next)) break;
-            final nextColors = _resolveColors(next);
-            var nextFg = nextColors.fg;
-            if (next.faint) {
-              nextFg = nextFg.withOpacity(0.5);
-            }
-            if (nextFg != fg) break;
-            buf.write(next.text);
-            end++;
-          }
+        final cellLeft = origin.dx + x * cellW;
 
+        if (!cell.invisible && cell.text.isNotEmpty) {
           final tp = TextPainter(
             text: TextSpan(
-              text: buf.toString(),
-              style: runStyle,
+              text: cell.text,
+              style: _textStyle(baseStyle, cell, fg),
             ),
             textDirection: TextDirection.ltr,
             maxLines: 1,
@@ -194,49 +170,27 @@ class VtPainter extends CustomPainter {
               applyHeightToFirstAscent: false,
               applyHeightToLastDescent: false,
             ),
-          )..layout();
+          )..layout(maxWidth: cellW);
 
           final measuredBaseline = tp.computeDistanceToActualBaseline(
             TextBaseline.alphabetic,
           );
-          // Place so the string’s baseline sits on the cell baseline.
-          // X = left edge of the first cell in the run (Ghostty grid_pos).
           tp.paint(
             canvas,
-            Offset(
-              origin.dx + x * cellW,
-              baselineY - measuredBaseline,
-            ),
+            Offset(cellLeft, baselineY - measuredBaseline),
           );
+        }
 
-          // Decorations for each cell in the run (underline color may differ).
-          for (var cx = x; cx < end; cx++) {
-            _paintDecorations(
-              canvas,
-              frame.cellAt(cx, y),
-              origin.dx + cx * cellW,
-              cellTop,
-              cellW,
-              cellH,
-              fg,
-            );
-          }
-
-          x = end;
-        } else {
-          // Invisible or empty-with-deco: decorations only.
-          if (hasDeco) {
-            _paintDecorations(
-              canvas,
-              cell,
-              origin.dx + x * cellW,
-              cellTop,
-              cellW,
-              cellH,
-              fg,
-            );
-          }
-          x++;
+        if (hasDeco) {
+          _paintDecorations(
+            canvas,
+            cell,
+            cellLeft,
+            cellTop,
+            cellW,
+            cellH,
+            fg,
+          );
         }
       }
     }
@@ -309,14 +263,6 @@ class VtPainter extends CustomPainter {
       fontWeight: cell.bold ? FontWeight.w700 : FontWeight.w400,
       fontStyle: cell.italic ? FontStyle.italic : FontStyle.normal,
     );
-  }
-
-  bool _sameRunStyle(VtCell a, VtCell b) {
-    // Glyph style only — decorations are painted per-cell after the run.
-    return a.bold == b.bold &&
-        a.italic == b.italic &&
-        a.faint == b.faint &&
-        a.selected == b.selected;
   }
 
   void _paintDecorations(
