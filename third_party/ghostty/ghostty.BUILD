@@ -20,17 +20,13 @@ filegroup(
     visibility = ["//visibility:public"],
 )
 
+# Include *_test.zig too: some Ghostty sources @import them at comptime.
 filegroup(
     name = "zig_srcs",
-    srcs = glob(
-        [
-            "src/**/*.zig",
-            "pkg/**/*.zig",
-        ],
-        exclude = [
-            "src/**/*_test.zig",
-        ],
-    ),
+    srcs = glob([
+        "src/**/*.zig",
+        "pkg/**/*.zig",
+    ]),
     visibility = ["//visibility:public"],
 )
 
