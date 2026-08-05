@@ -11,10 +11,10 @@ common --enable_platform_specific_config
 common --incompatible_strict_action_env
 common --incompatible_disallow_empty_glob=false
 
-# Bazel disk on workspace, not root /
-startup --output_user_root=/mnt/workspace/.cache/bazel-flutter-hello
+# Do NOT pin startup --output_user_root to a host path: `bb remote` runners
+# cannot mkdir /mnt/workspace/... and must use the runner default cache.
 
-# Hermetic Java for analysis (rules_java) — still coordinator-side.
+# Hermetic Java for analysis (on whatever machine runs Bazel — prefer remote runner).
 common --java_runtime_version=remotejdk_21
 common --tool_java_runtime_version=remotejdk_21
 
