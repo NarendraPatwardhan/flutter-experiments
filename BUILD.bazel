@@ -34,6 +34,46 @@ cp $(location :agentos_flutter_host) $(location agentos_native/libagentos_flutte
 """,
 )
 
+# Complete Linux product: Flutter app.linux bundle + AgentOS native host assets.
+# Unpack and run from the tree root (binary next to data/ and lib/).
+genrule(
+    name = "linux_product_bundle",
+    srcs = [
+        ":app.linux",
+        ":agentos_native_bundle",
+    ],
+    outs = ["linux_product.tar.gz"],
+    cmd = """
+set -euo pipefail
+WORKDIR=$$(mktemp -d)
+trap 'rm -rf "$$WORKDIR"' EXIT
+# Locate the Flutter Linux release tree among //:app.linux outputs.
+ART=""
+for f in $(locations :app.linux); do
+  if [ -d "$$f" ] && [ -e "$$f/flutter_bazel_hello" ]; then
+    ART="$$f"
+    break
+  fi
+done
+if [ -z "$$ART" ]; then
+  echo "linux_product_bundle: could not find app.linux_build_artifacts tree" >&2
+  ls -la $(locations :app.linux) >&2 || true
+  exit 1
+fi
+cp -a "$$ART/." "$$WORKDIR/"
+mkdir -p "$$WORKDIR/lib" "$$WORKDIR/data"
+for f in $(locations :agentos_native_bundle); do
+  case "$$f" in
+    *libagentos_flutter_host.so) cp -f "$$f" "$$WORKDIR/lib/" ;;
+    *kernel.wasm) cp -f "$$f" "$$WORKDIR/data/" ;;
+  esac
+done
+test -f "$$WORKDIR/lib/libagentos_flutter_host.so"
+test -f "$$WORKDIR/data/kernel.wasm"
+tar -C "$$WORKDIR" -czf $(location linux_product.tar.gz) .
+""",
+)
+
 flutter_library(
     name = "lib",
     srcs = glob(["lib/**"]),

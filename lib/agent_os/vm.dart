@@ -140,7 +140,77 @@ class AgentOsVm {
     });
   }
 
+  /// Structured guest exec (shell command). Long work off the UI isolate.
+  Future<AgentOsExecResult> exec(
+    String cmd, {
+    int maxTicks = 0,
+    int stdoutCap = 256 * 1024,
+    int stderrCap = 64 * 1024,
+  }) {
+    _ensureOpen();
+    final handle = _handle;
+    final path = _libraryPath;
+    return Isolate.run(() {
+      final native = AgentOsNative.open(path);
+      final cmdUnits = [...cmd.codeUnits, 0];
+      final cmdPtr = mallocBytes<Uint8>(cmdUnits.length, sizeOf<Uint8>());
+      final stdoutBuf = mallocBytes<Uint8>(stdoutCap, sizeOf<Uint8>());
+      final stderrBuf = mallocBytes<Uint8>(stderrCap, sizeOf<Uint8>());
+      final stdoutLen = mallocBytes<Size>(1, sizeOf<Size>());
+      final stderrLen = mallocBytes<Size>(1, sizeOf<Size>());
+      final outExit = mallocBytes<Int32>(1, sizeOf<Int32>());
+      try {
+        cmdPtr.asTypedList(cmdUnits.length).setAll(0, cmdUnits);
+        final rc = native.exec(
+          handle,
+          cmdPtr,
+          maxTicks,
+          stdoutBuf,
+          stdoutCap,
+          stdoutLen,
+          stderrBuf,
+          stderrCap,
+          stderrLen,
+          outExit,
+        );
+        if (rc != 0) {
+          throw StateError('aos_vm_exec failed: ${native.errorMessage()}');
+        }
+        final so = stdoutLen.value;
+        final se = stderrLen.value;
+        return AgentOsExecResult(
+          exitCode: outExit.value,
+          stdout: so == 0
+              ? Uint8List(0)
+              : Uint8List.fromList(stdoutBuf.asTypedList(so)),
+          stderr: se == 0
+              ? Uint8List(0)
+              : Uint8List.fromList(stderrBuf.asTypedList(se)),
+        );
+      } finally {
+        freePtr(cmdPtr);
+        freePtr(stdoutBuf);
+        freePtr(stderrBuf);
+        freePtr(stdoutLen);
+        freePtr(stderrLen);
+        freePtr(outExit);
+      }
+    });
+  }
+
   void _ensureOpen() {
     if (_closed) throw StateError('AgentOsVm is closed');
   }
+}
+
+class AgentOsExecResult {
+  const AgentOsExecResult({
+    required this.exitCode,
+    required this.stdout,
+    required this.stderr,
+  });
+
+  final int exitCode;
+  final Uint8List stdout;
+  final Uint8List stderr;
 }

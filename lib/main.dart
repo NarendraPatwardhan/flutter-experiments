@@ -37,56 +37,76 @@ class HomePage extends StatefulWidget {
 }
 
 class _HomePageState extends State<HomePage> {
-  String _status = 'Idle — place kernel.wasm + libagentos_flutter_host.so '
-      'beside the binary (lib/) to smoke-boot.';
+  String _status =
+      'Idle — product bundle stages lib/ + data/kernel.wasm for smoke.';
   String _output = '';
   bool _busy = false;
 
-  Future<void> _smokeBoot() async {
+  ({String lib, String kernel})? _locateAssets() {
+    final exeDir = File(Platform.resolvedExecutable).parent.path;
+    final libCandidates = [
+      '$exeDir/lib/libagentos_flutter_host.so',
+      '$exeDir/libagentos_flutter_host.so',
+    ];
+    final kernelCandidates = [
+      '$exeDir/data/kernel.wasm',
+      '$exeDir/kernel.wasm',
+      '$exeDir/lib/kernel.wasm',
+    ];
+    String? libPath;
+    String? kernelPath;
+    for (final p in libCandidates) {
+      if (File(p).existsSync()) {
+        libPath = p;
+        break;
+      }
+    }
+    for (final p in kernelCandidates) {
+      if (File(p).existsSync()) {
+        kernelPath = p;
+        break;
+      }
+    }
+    if (libPath == null || kernelPath == null) return null;
+    return (lib: libPath, kernel: kernelPath);
+  }
+
+  Future<void> _smoke() async {
     setState(() {
       _busy = true;
       _status = 'Looking for native assets…';
       _output = '';
     });
     try {
-      final exeDir = File(Platform.resolvedExecutable).parent.path;
-      final libCandidates = [
-        '$exeDir/lib/libagentos_flutter_host.so',
-        '$exeDir/libagentos_flutter_host.so',
-      ];
-      final kernelCandidates = [
-        '$exeDir/data/kernel.wasm',
-        '$exeDir/kernel.wasm',
-        '$exeDir/lib/kernel.wasm',
-      ];
-      final libPath = libCandidates.cast<String?>().firstWhere(
-            (p) => p != null && File(p).existsSync(),
-            orElse: () => null,
-          );
-      final kernelPath = kernelCandidates.cast<String?>().firstWhere(
-            (p) => p != null && File(p).existsSync(),
-            orElse: () => null,
-          );
-      if (libPath == null || kernelPath == null) {
+      final assets = _locateAssets();
+      if (assets == null) {
         setState(() {
           _status =
-              'Native assets missing.\nlib: $libPath\nkernel: $kernelPath\n'
-              'Stage from bazel-bin agentos_native/ after remote build.';
+              'Native assets missing under exe dir lib/ and data/.\n'
+              'Build //:linux_product_bundle on BuildBuddy and unpack to dist/linux.';
         });
         return;
       }
       setState(() => _status = 'Booting AgentOS kernel…');
       final vm = await AgentOsVm.bootFromFile(
-        kernelPath,
-        libraryPath: libPath,
+        assets.kernel,
+        libraryPath: assets.lib,
       );
       try {
         final state = await vm.tick();
-        final bytes = await vm.takeOutput();
-        final text = utf8.decode(bytes, allowMalformed: true);
+        final bootOut = await vm.takeOutput();
+        setState(() => _status = 'Boot OK (tick=$state). Running exec…');
+        // Minimal structured command; no base image ⇒ may fail closed without /bin/sh.
+        final result = await vm.exec('echo agentos-flutter-host');
+        final text = StringBuffer()
+          ..writeln('--- take_output ---')
+          ..writeln(utf8.decode(bootOut, allowMalformed: true))
+          ..writeln('--- exec exit=${result.exitCode} ---')
+          ..writeln(utf8.decode(result.stdout, allowMalformed: true))
+          ..writeln(utf8.decode(result.stderr, allowMalformed: true));
         setState(() {
-          _status = 'Boot OK. tick=$state';
-          _output = text.isEmpty ? '(no output yet)' : text;
+          _status = 'Done. exec exit=${result.exitCode}';
+          _output = text.toString();
         });
       } finally {
         await vm.close();
@@ -116,15 +136,15 @@ class _HomePageState extends State<HomePage> {
             ),
             const SizedBox(height: 8),
             Text(
-              'C ABI over KernelHost (not JS). See docs/native-host-ffi.md',
+              'C ABI over KernelHost — boot + exec. No JS path.',
               style: theme.textTheme.bodyMedium?.copyWith(
                 color: theme.colorScheme.onSurfaceVariant,
               ),
             ),
             const SizedBox(height: 16),
             FilledButton(
-              onPressed: _busy ? null : _smokeBoot,
-              child: Text(_busy ? 'Working…' : 'Smoke-boot kernel'),
+              onPressed: _busy ? null : _smoke,
+              child: Text(_busy ? 'Working…' : 'Smoke boot + exec'),
             ),
             const SizedBox(height: 16),
             Text(_status, style: theme.textTheme.bodyLarge),

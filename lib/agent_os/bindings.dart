@@ -58,6 +58,31 @@ typedef _TakeOutputDart = int Function(int vm, Pointer<Uint8> buf, int cap);
 typedef _CloseNative = Int32 Function(Uint64 vm);
 typedef _CloseDart = int Function(int vm);
 
+typedef _ExecNative = Int32 Function(
+  Uint64 vm,
+  Pointer<Uint8> cmd,
+  Uint64 maxTicks,
+  Pointer<Uint8> stdoutBuf,
+  Size stdoutCap,
+  Pointer<Size> stdoutLen,
+  Pointer<Uint8> stderrBuf,
+  Size stderrCap,
+  Pointer<Size> stderrLen,
+  Pointer<Int32> outExit,
+);
+typedef _ExecDart = int Function(
+  int vm,
+  Pointer<Uint8> cmd,
+  int maxTicks,
+  Pointer<Uint8> stdoutBuf,
+  int stdoutCap,
+  Pointer<Size> stdoutLen,
+  Pointer<Uint8> stderrBuf,
+  int stderrCap,
+  Pointer<Size> stderrLen,
+  Pointer<Int32> outExit,
+);
+
 typedef _LastErrorNative = Pointer<Uint8> Function();
 typedef _LastErrorDart = Pointer<Uint8> Function();
 
@@ -71,6 +96,7 @@ class AgentOsNative {
         takeOutput =
             _lib.lookupFunction<_TakeOutputNative, _TakeOutputDart>('aos_vm_take_output'),
         close = _lib.lookupFunction<_CloseNative, _CloseDart>('aos_vm_close'),
+        exec = _lib.lookupFunction<_ExecNative, _ExecDart>('aos_vm_exec'),
         lastError =
             _lib.lookupFunction<_LastErrorNative, _LastErrorDart>('aos_last_error');
 
@@ -81,6 +107,7 @@ class AgentOsNative {
   final _SendInputDart sendInput;
   final _TakeOutputDart takeOutput;
   final _CloseDart close;
+  final _ExecDart exec;
   final _LastErrorDart lastError;
 
   static AgentOsNative open([String? path]) {

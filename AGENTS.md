@@ -9,7 +9,7 @@ bb remote --run_from_branch=main --os=linux --timeout=2h --script '…'
 # Stage under dist/ for local run only — never commit dist/ or *.tar.gz.
 ```
 
-Primary target: **`//:app.linux`**. AgentOS native: **`//:agentos_native_bundle`** (kernel + C ABI host). Optional: `//:app.web`, `//:widget_test`.
+Primary ship target: **`//:linux_product_bundle`**. Also: `//:app.linux`, `//:agentos_native_bundle`. Optional: `//:app.web`, `//:widget_test`.
 
 | Command | Allowed? |
 |---------|----------|

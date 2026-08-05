@@ -44,8 +44,11 @@ Flutter UI
 | `aos_vm_tick` | One fuel quantum; state runnable/waiting/exited |
 | `aos_vm_send_input` | Terminal input bytes |
 | `aos_vm_take_output` | Drain capture buffer |
+| `aos_vm_exec` | Structured shell command (`KernelHost::exec`) |
 | `aos_vm_close` | Drop host |
 | `aos_last_error` | Last error string |
+
+Ship tree: `//:linux_product_bundle` → `linux_product.tar.gz` with `lib/libagentos_flutter_host.so` and `data/kernel.wasm` next to the Flutter binary.
 
 ## Ownership
 

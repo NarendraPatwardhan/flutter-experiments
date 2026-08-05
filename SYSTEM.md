@@ -233,7 +233,7 @@ Do not keep a second “old approach” tree in this repository. One product tre
 | **A — Host proven** | rules_flutter Linux app builds on BuildBuddy; runs from `dist/linux`. **Done.** |
 | **B — Repo clean** | Only the Bazel remote approach remains; docs match practice. **Done.** |
 | **C — AgentOS pin** | `git_override` pin + patches; root hermetic_cc; `//:agentos_kernel` builds on BuildBuddy. **Done.** |
-| **D — Native FFI host** | C ABI over `KernelHost` + Dart FFI; stage with Linux app. |
+| **D — Native FFI host** | C ABI over `KernelHost` + Dart FFI; opt+strip; `//:linux_product_bundle`. |
 | **E — Guest / image** | Product guests and image layers as required for the terminal computer. |
 | **F — Terminal UX** | Terminal UI (for example libghostty integration) in the Flutter host. |
 | **G — Mobile** | Same product idea on mobile platforms. |

@@ -5,7 +5,7 @@
 use std::collections::HashMap;
 use std::sync::{Arc, Mutex, OnceLock};
 
-use host::{KernelHost, KernelHostBuilder, StreamSink, TickState};
+use host::{ExecOptions, KernelHost, KernelHostBuilder, StreamSink, TickState};
 
 struct SharedSink(Arc<Mutex<Vec<u8>>>);
 
@@ -236,6 +236,92 @@ pub extern "C" fn aos_vm_close(vm: u64) -> i32 {
     if map.remove(&vm).is_none() {
         set_error("aos_vm_close: unknown handle");
         return -1;
+    }
+    0
+}
+
+fn copy_out(src: &[u8], buf: *mut u8, cap: usize, out_len: *mut usize) {
+    let n = src.len().min(cap);
+    if !out_len.is_null() {
+        unsafe {
+            *out_len = n;
+        }
+    }
+    if n > 0 && !buf.is_null() {
+        unsafe {
+            std::ptr::copy_nonoverlapping(src.as_ptr(), buf, n);
+        }
+    }
+}
+
+/// # Safety
+/// `cmd` is a NUL-terminated C string. Buffer pointers may be null if cap is 0.
+#[no_mangle]
+pub unsafe extern "C" fn aos_vm_exec(
+    vm: u64,
+    cmd: *const std::os::raw::c_char,
+    max_ticks: u64,
+    stdout_buf: *mut u8,
+    stdout_cap: usize,
+    stdout_len: *mut usize,
+    stderr_buf: *mut u8,
+    stderr_cap: usize,
+    stderr_len: *mut usize,
+    out_exit: *mut i32,
+) -> i32 {
+    clear_error();
+    if vm == 0 || cmd.is_null() {
+        set_error("aos_vm_exec: invalid args");
+        return -1;
+    }
+    let cmd = match std::ffi::CStr::from_ptr(cmd).to_str() {
+        Ok(s) => s,
+        Err(_) => {
+            set_error("aos_vm_exec: cmd is not UTF-8");
+            return -1;
+        }
+    };
+    let ticks = if max_ticks == 0 {
+        5_000_000usize
+    } else {
+        match usize::try_from(max_ticks) {
+            Ok(t) => t,
+            Err(_) => {
+                set_error("aos_vm_exec: max_ticks too large");
+                return -1;
+            }
+        }
+    };
+
+    let map = match vms().lock() {
+        Ok(m) => m,
+        Err(_) => {
+            set_error("vm table lock poisoned");
+            return -1;
+        }
+    };
+    let Some(entry) = map.get(&vm) else {
+        set_error("aos_vm_exec: unknown handle");
+        return -1;
+    };
+    let mut host = match entry.host.lock() {
+        Ok(h) => h,
+        Err(_) => {
+            set_error("host lock poisoned");
+            return -1;
+        }
+    };
+    let result = match host.exec(cmd, ticks, ExecOptions::default()) {
+        Ok(r) => r,
+        Err(e) => {
+            set_error(format!("exec failed: {e:#}"));
+            return -1;
+        }
+    };
+    copy_out(&result.stdout, stdout_buf, stdout_cap, stdout_len);
+    copy_out(&result.stderr, stderr_buf, stderr_cap, stderr_len);
+    if !out_exit.is_null() {
+        *out_exit = result.exit_code;
     }
     0
 }

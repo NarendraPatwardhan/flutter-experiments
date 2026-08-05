@@ -1,34 +1,31 @@
 # flutter-app
 
-Minimal Flutter + [rules_flutter](https://github.com/SpencerC/rules_flutter) with **zero local Bazel analysis**. The primary product is a **Linux desktop** binary built on BuildBuddy and staged under `dist/` for local run only (not committed).
+Minimal Flutter + [rules_flutter](https://github.com/SpencerC/rules_flutter) with **zero local Bazel analysis**. The primary product is a **Linux desktop** binary with a native AgentOS host (C ABI over `KernelHost`), built on BuildBuddy and staged under `dist/` for local run only (not committed).
 
 ## AgentOS pin
 
 AgentOS is **not** vendored and **not** a `local_path_override`. Root `MODULE.bazel` uses:
 
 - `bazel_dep(name = "agent-os", version = "0.0.0")`
-- `git_override` → `https://github.com/NarendraPatwardhan/agent-os.git` at a fixed **commit**
-- Product patches under `third_party/agent-os/`
-- Root re-host of `hermetic_cc_toolchain` → `@zig_sdk` (required for nested AgentOS)
+- `git_override` → fixed **commit** + patches under `third_party/agent-os/`
+- Root re-host of `hermetic_cc_toolchain` → `@zig_sdk`
 
-Targets (build from the pin, not release downloads):
+## Targets
 
-```text
-//:agentos_kernel          →  kernel.wasm
-//:agentos_flutter_host    →  libagentos_flutter_host.so (C ABI over KernelHost)
-//:agentos_native_bundle   →  both staged under agentos_native/
-//:app.linux               →  Flutter Linux app
-```
+| Target | Purpose |
+|--------|---------|
+| `//:linux_product_bundle` | **Ship tree** — Flutter Linux app + stripped host `.so` + `kernel.wasm` |
+| `//:app.linux` | Flutter Linux app only |
+| `//:agentos_native_bundle` | `kernel.wasm` + `libagentos_flutter_host.so` |
+| `//:agentos_flutter_host` | Opt + genrule-stripped C ABI host |
+| `//:agentos_kernel` | Kernel wasm from pin |
 
-To bump AgentOS: change the `commit` in `git_override`, confirm patches still apply, then remote-build the targets above.
-
-## Build (zero local analysis) + fetch for local run
+## Build (zero local analysis)
 
 ```bash
 bb login   # once
 git push origin main
 
-# Remote: AgentOS pin smoke + Linux Flutter host
 bb remote --run_from_branch=main --os=linux --timeout=2h --script '
 set -euo pipefail
 export DEBIAN_FRONTEND=noninteractive
@@ -36,39 +33,22 @@ if ! pkg-config --exists gtk+-3.0 2>/dev/null; then
   sudo apt-get update -qq
   sudo apt-get install -y -qq clang cmake ninja-build pkg-config libgtk-3-dev liblzma-dev
 fi
-bazel build //:agentos_native_bundle //:app.linux --remote_download_toplevel
-# Stage native host next to the Linux bundle layout (lib/ + data/)
-mkdir -p bazel-bin/app.linux_build_artifacts/lib bazel-bin/app.linux_build_artifacts/data
-cp -f bazel-bin/agentos_native/libagentos_flutter_host.so bazel-bin/app.linux_build_artifacts/lib/
-cp -f bazel-bin/agentos_native/kernel.wasm bazel-bin/app.linux_build_artifacts/data/
-tar -C bazel-bin/app.linux_build_artifacts -czf linux_bundle.tar.gz .
+bazel build //:linux_product_bundle --remote_download_toplevel
 mkdir -p /home/buildbuddy/workspace/artifacts/command-0
-cp linux_bundle.tar.gz /home/buildbuddy/workspace/artifacts/command-0/
+cp bazel-bin/linux_product.tar.gz /home/buildbuddy/workspace/artifacts/command-0/
 '
 
-# Download the uploaded tarball from the invocation (bytestream), then:
+# Download linux_product.tar.gz from the invocation, then:
 rm -rf dist/linux && mkdir -p dist/linux
-tar -C dist/linux -xzf linux_bundle.tar.gz
+tar -C dist/linux -xzf linux_product.tar.gz
 chmod +x dist/linux/flutter_bazel_hello
-```
-
-Run from the bundle directory so `data/` and `lib/` resolve:
-
-```bash
 cd dist/linux && ./flutter_bazel_hello
 ```
 
-`dist/`, `bb-out/`, and `*.tar.gz` bundles are **local artifacts only** — never commit them.
+In the app: **Smoke boot + exec** loads `lib/libagentos_flutter_host.so` and `data/kernel.wasm`.
 
-## Targets
-
-| Target | Purpose |
-|--------|---------|
-| `//:app.linux` | **Primary** — Linux GTK release bundle |
-| `//:agentos_kernel` | AgentOS pin smoke — kernel from `@agent-os` git pin |
-| `//:app.web` | Optional hermetic web |
-| `//:widget_test` | Widget tests |
+`dist/`, `bb-out/`, and `*.tar.gz` are **local artifacts only** — never commit them.
 
 ## Policy
 
-See [AGENTS.md](AGENTS.md) and [SYSTEM.md](SYSTEM.md): only `bb remote` (no host `bazel` / `flutter build`).
+See [AGENTS.md](AGENTS.md) and [SYSTEM.md](SYSTEM.md): only `bb remote` (no host `bazel` / `flutter build`). Native host only — no AgentOS JS path.
