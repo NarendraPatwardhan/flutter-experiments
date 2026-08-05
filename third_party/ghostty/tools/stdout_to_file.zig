@@ -1,13 +1,14 @@
 //! Run a program and write its stdout to a file.
 //! Usage: stdout_to_file <out_path> <program> [args...]
-//! Zig 0.16 process.Init API.
+//! Zig 0.16: std.process.run + Io.Dir.
 
 const std = @import("std");
 
 pub fn main(init: std.process.Init) !void {
     const gpa = init.gpa;
+    const io = init.io;
 
-    var args_iter = try init.minimal.args.initAllocator(gpa);
+    var args_iter = try init.minimal.args.iterateAllocator(gpa);
     defer args_iter.deinit();
     _ = args_iter.next();
 
@@ -21,25 +22,25 @@ pub fn main(init: std.process.Init) !void {
         try child_argv.append(gpa, a);
     }
 
-    const out_file = try std.fs.cwd().createFile(out_path, .{});
-    defer out_file.close();
+    const result = try std.process.run(gpa, io, .{
+        .argv = child_argv.items,
+    });
+    defer gpa.free(result.stdout);
+    defer gpa.free(result.stderr);
 
-    var child = std.process.Child.init(child_argv.items, gpa);
-    child.stdout_behavior = .Pipe;
-    child.stderr_behavior = .Inherit;
-    try child.spawn();
+    var out_file = try std.Io.Dir.cwd().createFile(io, out_path, .{});
+    defer out_file.close(io);
+    var buf: [4096]u8 = undefined;
+    var w = out_file.writer(io, &buf);
+    try w.interface.writeAll(result.stdout);
+    try w.interface.flush();
 
-    const stdout = child.stdout orelse unreachable;
-    var buf: [64 * 1024]u8 = undefined;
-    while (true) {
-        const n = try stdout.read(buf[0..]);
-        if (n == 0) break;
-        try out_file.writeAll(buf[0..n]);
+    if (result.stderr.len > 0) {
+        std.debug.print("{s}", .{result.stderr});
     }
 
-    const term = try child.wait();
-    switch (term) {
-        .Exited => |code| std.process.exit(code),
+    switch (result.term) {
+        .exited => |code| std.process.exit(code),
         else => std.process.exit(1),
     }
 }

@@ -1,13 +1,14 @@
 //! Run a program after chdir to a root directory.
 //! Usage: chdir_exec <root> <program> [args...]
-//! Zig 0.16 process.Init API.
+//! Zig 0.16: std.process.Init + std.process.spawn.
 
 const std = @import("std");
 
 pub fn main(init: std.process.Init) !void {
     const gpa = init.gpa;
+    const io = init.io;
 
-    var args_iter = try init.minimal.args.initAllocator(gpa);
+    var args_iter = try init.minimal.args.iterateAllocator(gpa);
     defer args_iter.deinit();
     _ = args_iter.next();
 
@@ -33,11 +34,13 @@ pub fn main(init: std.process.Init) !void {
         while (i < child_argv.items.len) : (i += 1) gpa.free(child_argv.items[i]);
     }
 
-    var child = std.process.Child.init(child_argv.items, gpa);
-    child.cwd = abs_root;
-    const term = try child.spawnAndWait();
+    var child = try std.process.spawn(io, .{
+        .argv = child_argv.items,
+        .cwd = .{ .path = abs_root },
+    });
+    const term = try child.wait(io);
     switch (term) {
-        .Exited => |code| std.process.exit(code),
+        .exited => |code| std.process.exit(code),
         else => std.process.exit(1),
     }
 }
