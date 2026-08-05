@@ -2,8 +2,6 @@
 
 Minimal Flutter + [rules_flutter](https://github.com/SpencerC/rules_flutter) with **zero local Bazel analysis**. The primary product is a **Linux desktop** binary built on BuildBuddy and staged under `dist/` for local run only (not committed).
 
-**License:** this product is [Apache-2.0](./LICENSE) (opyt.cloud). **AgentOS** is a separate git-pinned module under **BSL 1.1** (see `MODULE.bazel` comments and upstream LICENSE).
-
 ## AgentOS pin
 
 AgentOS is **not** vendored and **not** a `local_path_override`. Root `MODULE.bazel` uses:

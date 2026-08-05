@@ -26,7 +26,6 @@ Primary target: **`//:app.linux`**. AgentOS pin smoke: **`//:agentos_kernel`**. 
 - Do **not** substitute GitHub release zips for `@agent-os//…` labels.
 - Patches live under `third_party/agent-os/`.
 - Root re-hosts `hermetic_cc` → `@zig_sdk`.
-- Product is Apache-2.0; AgentOS is BSL 1.1 (see MODULE comments).
 
 ## Artifacts
 
