@@ -1,32 +1,26 @@
 # flutter-bazel-hello
 
-Minimal Flutter app built with [rules_flutter](https://github.com/SpencerC/rules_flutter) and **BuildBuddy RBE only**.
+Minimal Flutter + rules_flutter. **All builds run on BuildBuddy remote runners** (Workflows). Agent hosts do not run Bazel analysis or compiles.
 
-## Policy
-
-1. **Push to GitHub first**
-2. **Build with `bb` only** (remote spawns; no local compile)
+## How to build
 
 ```bash
-bb login   # once per machine / repo
-
-git push -u origin main
-bb build //:app.web
-bb test  //:widget_test
+git push origin main
 ```
 
-Local `bazel build` without credentials will fail remote execution (by design).
+Then open [app.buildbuddy.io](https://app.buildbuddy.io/) for the workflow invocation.
 
-## Targets
+Do **not** run `bb build` or `bazel build` on a laptop/agent for product builds — analysis (including Flutter SDK fetch) would run locally.
 
-| Target | Notes |
-|--------|--------|
-| `//:app.web` | Hermetic web (primary) |
-| `//:widget_test` | Widget tests |
-| `//:app.linux` | Manual; needs desktop deps on the *worker* story later |
+## Setup (once)
 
-## Config
+1. [BuildBuddy](https://app.buildbuddy.io/) GitHub app on `NarendraPatwardhan/flutter-experiments`
+2. Workflows enabled for this repo
+3. `buildbuddy.yaml` in tree (already)
 
-- `.bazelrc` — remote cache + executor always on; `no-local` on all actions
-- `buildbuddy.yaml` — optional BuildBuddy Workflows after GitHub app is connected
-- Output root: `/mnt/workspace/.cache/bazel-flutter-hello`
+## Targets (run only in Workflows)
+
+- `//:app.web` — hermetic web
+- `//:widget_test` — tests
+
+`.bazelrc` still forces remote **spawns** (RBE) when Bazel runs on the workflow runner.

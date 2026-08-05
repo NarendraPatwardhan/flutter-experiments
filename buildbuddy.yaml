@@ -1,16 +1,25 @@
-# BuildBuddy Workflows — runs after push when the GitHub app is connected.
-# This is the preferred "fully remote coordinator" path for CI.
+# BuildBuddy Workflows — full remote coordinator + RBE.
+# The runner is NOT this laptop: clone, analysis, repo fetches, and spawns
+# all run on BuildBuddy remote runners after git push.
+#
+# Requires BuildBuddy GitHub app connected to this repo in the dashboard.
+# Local `bb build` on an agent host is FORBIDDEN for this project.
+
 actions:
-  - name: "Flutter web (remote)"
-    container_image: "ubuntu-20.04"
+  - name: "Flutter web (fully remote)"
     triggers:
       push:
         branches:
-          - "master"
           - "main"
+          - "master"
       pull_request:
         branches:
           - "*"
+    # Remote runner OS image (BuildBuddy-managed). Analysis + Flutter SDK
+    # fetch happen here, not on the agent laptop.
+    os: "ubuntu-22.04"
     steps:
-      - run: "bb build //:app.web"
-      - run: "bb test //:widget_test"
+      - name: "Build web"
+        run: "bazel build //:app.web"
+      - name: "Widget tests"
+        run: "bazel test //:widget_test"

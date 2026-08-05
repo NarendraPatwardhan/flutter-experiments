@@ -1,19 +1,30 @@
-# Agent rules for this repo
+# Agent rules
 
-## Build policy (non-negotiable)
+## Builds are fully remote. No local Bazel.
 
-1. **Push first.** Never start a BuildBuddy / RBE build until `main` (or the branch) is pushed to `origin`.
-2. **Always remote.** Use `bb`, not bare `bazel`. Spawns must run on RBE; do not run local compiles.
-3. **Do not** use local `flutter build` / host SDK as the product build path.
+| Forbidden on agent host | Required |
+|-------------------------|----------|
+| `bazel build` / `bazel test` | Push → BuildBuddy Workflows |
+| `bb build` / `bb test` (local coordinator) | `git push` then watch BuildBuddy UI |
+| Host `flutter build` | Workflow job on BuildBuddy runners |
+
+**Why:** `bb build` still runs **analysis + Flutter SDK repo fetch on the machine that invokes it**. That is local. This repo uses **BuildBuddy Workflows** so the remote runner is the coordinator (analysis + fetches + RBE spawns).
+
+## Correct sequence
 
 ```bash
-# Correct sequence
-git status   # clean
-git push -u origin HEAD
-bb build //:app.web
-bb test  //:widget_test
+git add -A && git commit -m "..."
+git push origin HEAD
+# Preferred CI path: BuildBuddy Workflows (push-triggered)
+# Interactive full-remote path (remote coordinator, not this host):
+bb remote build //:app.web
+bb remote test  //:widget_test
 ```
 
-`.bazelrc` forces remote spawns by default (`spawn_strategy=remote`, `local_resources=0`, `no-local` on all actions, `remote_local_fallback=false`).
+Never: bare `bb build` / `bazel build` on the agent host (that is local analysis).
 
-Coordinator-only work (analysis, repo fetches) still runs where `bb` is invoked; **compile/link/test actions must not run on the agent host.**
+## One-time: connect the repo
+
+BuildBuddy dashboard → GitHub app → enable workflows for `NarendraPatwardhan/flutter-experiments`.
+
+Config: `buildbuddy.yaml` (checked in).
