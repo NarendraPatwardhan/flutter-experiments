@@ -1,5 +1,4 @@
-# @uucode — Zig module used by Ghostty libghostty-vt.
-# Tables generation is owned by //native/libghostty_vt (Bazel actions).
+# @uucode sources for rules_zig (Ghostty lib-vt Unicode dependency).
 
 exports_files(glob(["**/*"]))
 
@@ -10,7 +9,16 @@ filegroup(
 )
 
 filegroup(
-    name = "root",
-    srcs = ["src/root.zig"],
+    name = "ucd",
+    srcs = glob(["ucd/**"]),
+    visibility = ["//visibility:public"],
+)
+
+filegroup(
+    name = "tree",
+    srcs = glob(
+        ["**/*"],
+        exclude = [".git/**"],
+    ),
     visibility = ["//visibility:public"],
 )

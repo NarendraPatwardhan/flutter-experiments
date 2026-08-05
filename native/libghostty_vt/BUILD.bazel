@@ -1,16 +1,11 @@
-# libghostty-vt via rules_zig (Zig 0.16.0) — declared modules, not shell `zig build`.
-#
-# Graph:
-#   options (build_options, terminal_options)
-#   → unicode table generators (zig_binary) → generated zig modules
-#   → uucode module
-#   → zig_shared_library root = @ghostty//src/lib_vt.zig (C ABI exports)
+# libghostty-vt via rules_zig (product Zig 0.16.0 only).
+# Declared Zig modules + codegen tools — not shell `zig build` of Ghostty's build.zig.
 
 load("@rules_zig//zig:defs.bzl", "zig_binary", "zig_library", "zig_shared_library")
 
 package(default_visibility = ["//visibility:public"])
 
-# --- Compile-time option packages (Ghostty normally uses b.addOptions) --------
+# --- Option packages (Ghostty uses b.addOptions; we use real zig_library modules) ---
 
 zig_library(
     name = "build_options",
@@ -24,46 +19,172 @@ zig_library(
     import_name = "terminal_options",
 )
 
-# --- uucode (Ghostty dependency) ---------------------------------------------
-# Full uucode table generation matches Ghostty's SharedDeps; for lib-vt we
-# compile uucode with Ghostty's uucode_config. Tables are produced by Ghostty's
-# unicode generators which import uucode.
+# --- uucode (single module graph + generated tables) --------------------------
+# Ghostty wires config/storage/types as separate modules with ".zig" import names.
+# We mirror that with zig_library import_name.
+
+zig_library(
+    name = "uucode_types",
+    main = "@uucode//:src/types.zig",
+    import_name = "types.zig",
+)
+
+# config.zig and storage.zig import each other; ship both as srcs of one module
+# named config.zig, and expose storage as a re-export package for generate.
+zig_library(
+    name = "uucode_config_zig",
+    main = "@uucode//:src/config.zig",
+    srcs = [
+        "@uucode//:src/storage.zig",
+        "@uucode//:src/types.zig",
+        "@uucode//:src/fields.zig",
+        "@uucode//:src/components.zig",
+        "@uucode//:src/multi_slice.zig",
+        "@uucode//:src/quirks.zig",
+    ],
+    import_name = "config.zig",
+)
+
+zig_library(
+    name = "uucode_storage",
+    main = "@uucode//:src/storage.zig",
+    srcs = [
+        "@uucode//:src/config.zig",
+        "@uucode//:src/types.zig",
+        "@uucode//:src/fields.zig",
+        "@uucode//:src/components.zig",
+        "@uucode//:src/multi_slice.zig",
+        "@uucode//:src/quirks.zig",
+    ],
+    import_name = "storage.zig",
+)
+
+zig_library(
+    name = "uucode_build_config",
+    main = "@ghostty//:src/build/uucode_config.zig",
+    import_name = "build_config",
+    deps = [
+        ":uucode_config_zig",
+        ":uucode_storage",
+    ],
+)
+
+zig_binary(
+    name = "uucode_generate",
+    main = "@uucode//:src/generate.zig",
+    srcs = ["@uucode//:zig_srcs"],
+    extra_srcs = ["@uucode//:ucd"],
+    deps = [
+        ":uucode_config_zig",
+        ":uucode_storage",
+        ":uucode_build_config",
+    ],
+)
+
+# Codegen only: run generator with cwd = @uucode root (needs ucd/).
+genrule(
+    name = "gen_uucode_tables",
+    srcs = ["@uucode//:tree"],
+    tools = [":uucode_generate"],
+    outs = ["gen/uucode_tables.zig"],
+    cmd = """
+set -euo pipefail
+ROOT=""
+for f in $(locations @uucode//:tree); do
+  case "$$f" in
+    */src/root.zig)
+      ROOT=$$(cd "$$(dirname "$$f")/.." && pwd)
+      break
+      ;;
+  esac
+done
+if [ -z "$$ROOT" ] || [ ! -d "$$ROOT/ucd" ]; then
+  echo "uucode root/ucd not found" >&2
+  exit 1
+fi
+GEN=$(location :uucode_generate)
+OUT=$(location gen/uucode_tables.zig)
+# Absolute paths for run from uucode root.
+GEN_ABS=$$(cd $$(dirname "$$GEN") && pwd)/$$(basename "$$GEN")
+OUT_ABS=$$(cd $$(dirname "$$OUT") && pwd)/$$(basename "$$OUT")
+cd "$$ROOT"
+"$$GEN_ABS" "$$OUT_ABS"
+""",
+)
+
+zig_library(
+    name = "uucode_tables",
+    main = ":gen/uucode_tables.zig",
+    import_name = "tables",
+    deps = [
+        ":uucode_config_zig",
+        ":uucode_storage",
+        ":uucode_build_config",
+    ],
+)
 
 zig_library(
     name = "uucode",
     main = "@uucode//:src/root.zig",
     srcs = ["@uucode//:zig_srcs"],
     import_name = "uucode",
-    # Ghostty injects tables via build; generators depend on this module.
-    # If root.zig requires tables import, generators supply runtime use.
+    deps = [
+        ":uucode_tables",
+        ":uucode_types",
+        ":uucode_config_zig",
+        ":uucode_storage",
+    ],
 )
 
-# --- Unicode table generators (codegen actions; tools are zig_binary) --------
+# --- Ghostty unicode table generators ----------------------------------------
+
+UNICODE_ZIG = [
+    "@ghostty//:src/unicode/lut.zig",
+    "@ghostty//:src/unicode/props.zig",
+    "@ghostty//:src/unicode/props_table.zig",
+    "@ghostty//:src/unicode/props_uucode.zig",
+    "@ghostty//:src/unicode/symbols_table.zig",
+    "@ghostty//:src/unicode/symbols_uucode.zig",
+    "@ghostty//:src/unicode/grapheme.zig",
+    "@ghostty//:src/unicode/main.zig",
+]
+
+zig_library(
+    name = "unicode_tables_stub",
+    main = "stubs/unicode_tables_stub.zig",
+    import_name = "unicode_tables",
+)
+
+zig_library(
+    name = "symbols_tables_stub",
+    main = "stubs/symbols_tables_stub.zig",
+    import_name = "symbols_tables",
+)
 
 zig_binary(
     name = "props_unigen",
     main = "@ghostty//:src/unicode/props_uucode.zig",
-    srcs = [
-        "@ghostty//:src/unicode/lut.zig",
-        "@ghostty//:src/unicode/props.zig",
-        "@ghostty//:src/unicode/props_uucode.zig",
+    srcs = UNICODE_ZIG,
+    deps = [
+        ":uucode",
+        ":unicode_tables_stub",
+        ":symbols_tables_stub",
     ],
-    deps = [":uucode"],
 )
 
 zig_binary(
     name = "symbols_unigen",
     main = "@ghostty//:src/unicode/symbols_uucode.zig",
-    srcs = [
-        "@ghostty//:src/unicode/lut.zig",
-        "@ghostty//:src/unicode/symbols_uucode.zig",
+    srcs = UNICODE_ZIG,
+    deps = [
+        ":uucode",
+        ":unicode_tables_stub",
+        ":symbols_tables_stub",
     ],
-    deps = [":uucode"],
 )
 
-# Run generators → generated Zig modules (standard Bazel codegen, not package build).
 genrule(
-    name = "gen_unicode_tables",
+    name = "gen_ghostty_unicode_tables",
     tools = [
         ":props_unigen",
         ":symbols_unigen",
@@ -91,7 +212,7 @@ zig_library(
     import_name = "symbols_tables",
 )
 
-# --- libghostty-vt shared library (C ABI) ------------------------------------
+# --- libghostty-vt shared library (C ABI root = lib_vt.zig) -------------------
 
 zig_shared_library(
     name = "libghostty_vt",
@@ -105,6 +226,5 @@ zig_shared_library(
         ":unicode_tables",
         ":symbols_tables",
     ],
-    # Full filename for Flutter dlopen (rules_zig uses this as the declared file name).
     shared_lib_name = "libghostty-vt.so",
 )
