@@ -14,6 +14,8 @@ class VtMetrics {
     required this.cellBaseline,
     required this.underlinePosition,
     required this.underlineThickness,
+    required this.strikethroughPosition,
+    required this.overlinePosition,
     required this.cursorThickness,
     required this.fontSize,
     required this.fontFamily,
@@ -30,12 +32,22 @@ class VtMetrics {
   final double underlinePosition;
 
   final double underlineThickness;
+
+  /// Distance from the **top** of the cell to the top of the strikethrough.
+  final double strikethroughPosition;
+
+  /// Distance from the **top** of the cell to the top of the overline.
+  final double overlinePosition;
+
   final double cursorThickness;
   final double fontSize;
   final String fontFamily;
   final TextStyle style;
 
   double get topToBaseline => cellHeight - cellBaseline;
+
+  /// Thickness used for strikethrough / overline (same stroke as underline).
+  double get decorationThickness => underlineThickness;
 
   /// True monospaced faces only. Avoid Propo / dual-width Nerd aliases.
   static const List<String> fontFamilyFallback = [
@@ -117,6 +129,16 @@ class VtMetrics {
       0.0,
       cellH - underlineThickness,
     );
+    // Strikethrough ~ mid x-height (halfway from cell top to baseline).
+    final strikethroughPos = (topToBaseline * 0.55).clamp(
+      0.0,
+      cellH - underlineThickness,
+    );
+    // Overline sits near the top of the cell, one thickness in.
+    final overlinePos = underlineThickness.clamp(
+      0.0,
+      cellH - underlineThickness,
+    );
     // Cursor bar ~12% of cell width (Ghostty default thickness is config).
     final cursorThickness = math.max(1.0, (cellW * 0.12).roundToDouble());
 
@@ -126,6 +148,8 @@ class VtMetrics {
       cellBaseline: cellBaseline,
       underlinePosition: underlinePos,
       underlineThickness: underlineThickness,
+      strikethroughPosition: strikethroughPos,
+      overlinePosition: overlinePos,
       cursorThickness: cursorThickness,
       fontSize: fontSize,
       fontFamily: family,

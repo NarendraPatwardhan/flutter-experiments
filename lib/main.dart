@@ -1,13 +1,19 @@
+import 'dart:async';
 import 'dart:io';
-import 'dart:typed_data';
 
+import 'package:flutter/gestures.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/scheduler.dart';
-import 'agent_os/vm.dart';
-import 'vt/frame.dart';
+import 'package:flutter/services.dart';
+
+import 'session/product_session.dart';
+import 'vt/bindings.dart'
+    show
+        kSelectionGestureDrag,
+        kSelectionGesturePress,
+        kSelectionGestureRelease;
 import 'vt/metrics.dart';
 import 'vt/painter.dart';
-import 'vt/session.dart';
 import 'vt/theme.dart';
 
 void main() {
@@ -48,34 +54,45 @@ class HomePage extends StatefulWidget {
   State<HomePage> createState() => _HomePageState();
 }
 
-class _HomePageState extends State<HomePage> {
-  String _status = 'starting…';
-  VtFrame _frame = VtFrame.empty(cols: 80, rows: 24);
+class _HomePageState extends State<HomePage> with SingleTickerProviderStateMixin {
+  late final ProductSession _session;
+  late final AnimationController _blink;
+
   // Re-measured after first frame so fontconfig has resolved a real mono face.
   VtMetrics _metrics = VtMetrics.measure(fontSize: 13);
   EdgeInsets _gridPadding = const EdgeInsets.all(8);
-  bool _busy = true;
   bool _focused = true;
-  GhosttyVtSession? _vt;
   int _layoutCols = 80;
   int _layoutRows = 24;
+  bool _starting = false;
 
   @override
   void initState() {
     super.initState();
+    _session = ProductSession()..addListener(_onSession);
+    _blink = AnimationController(
+      vsync: this,
+      duration: const Duration(milliseconds: 530),
+    )..repeat(reverse: true);
+
     SchedulerBinding.instance.addPostFrameCallback((_) {
-      // Remeasure once the UI isolate has font fallback resolution.
       final m = VtMetrics.measure(fontSize: 13);
       if (mounted) {
         setState(() => _metrics = m);
       }
-      _runSession();
+      unawaited(_startSession());
     });
+  }
+
+  void _onSession() {
+    if (mounted) setState(() {});
   }
 
   @override
   void dispose() {
-    _vt?.close();
+    _blink.dispose();
+    _session.removeListener(_onSession);
+    _session.dispose();
     super.dispose();
   }
 
@@ -138,21 +155,40 @@ class _HomePageState extends State<HomePage> {
     );
   }
 
-  void _paintVt(GhosttyVtSession vt) {
-    final frame = vt.snapshot();
-    if (!mounted) return;
-    setState(() => _frame = frame);
+  Future<void> _startSession() async {
+    if (_starting) return;
+    _starting = true;
+    try {
+      final assets = _locateAssets();
+      if (assets == null) {
+        // Surface missing assets via a one-shot banner path if session never starts.
+        setState(() {});
+        return;
+      }
+      if (assets.vtLib == null || assets.image == null) {
+        setState(() {});
+        return;
+      }
+      await _session.start(
+        hostLib: assets.hostLib,
+        vtLib: assets.vtLib!,
+        kernel: assets.kernel,
+        image: assets.image!,
+        cols: _layoutCols,
+        rows: _layoutRows,
+        cellW: _metrics.cellWidth.round(),
+        cellH: _metrics.cellHeight.round(),
+      );
+    } catch (_) {
+      // ProductSession already records the error on statusLine.
+    } finally {
+      _starting = false;
+      if (mounted) setState(() {});
+    }
   }
 
-  void _vtBanner(GhosttyVtSession vt, String title) {
-    vt.writeText(
-      '\r\n\x1b[90m── \x1b[0m\x1b[1m$title\x1b[0m\r\n',
-    );
-  }
-
-  void _vtWriteOutput(GhosttyVtSession vt, Uint8List data) {
-    if (data.isEmpty) return;
-    vt.writeGuest(data);
+  Future<void> _rerun() async {
+    await _startSession();
   }
 
   void _onSurfaceLayout(Size size) {
@@ -167,150 +203,75 @@ class _HomePageState extends State<HomePage> {
       _layoutRows = fit.rows;
       _gridPadding = fit.padding;
     });
-    final vt = _vt;
-    if (vt != null && (vt.cols != fit.cols || vt.rows != fit.rows)) {
-      // Keep cell pixel size in sync with font metrics (Ghostty resize).
-      try {
-        vt.resize(
-          fit.cols,
-          fit.rows,
-          cellW: _metrics.cellWidth.round(),
-          cellH: _metrics.cellHeight.round(),
-        );
-        _paintVt(vt);
-      } catch (_) {
-        // Resize can fail mid-boot; ignore.
+    unawaited(
+      _session.resize(
+        fit.cols,
+        fit.rows,
+        _metrics.cellWidth.round(),
+        _metrics.cellHeight.round(),
+      ),
+    );
+  }
+
+  KeyEventResult _onKey(FocusNode node, KeyEvent event) {
+    final mod = HardwareKeyboard.instance.isControlPressed ||
+        HardwareKeyboard.instance.isMetaPressed;
+    // Ctrl/Cmd+V → paste; Ctrl/Cmd+Shift+C → copy selection (Ctrl+C stays interrupt).
+    if (event is KeyDownEvent && mod) {
+      if (event.logicalKey == LogicalKeyboardKey.keyV) {
+        unawaited(_pasteClipboard());
+        return KeyEventResult.handled;
       }
+      if (event.logicalKey == LogicalKeyboardKey.keyC &&
+          HardwareKeyboard.instance.isShiftPressed) {
+        unawaited(_copySelection());
+        return KeyEventResult.handled;
+      }
+    }
+    unawaited(_session.onKey(event));
+    return KeyEventResult.handled;
+  }
+
+  Future<void> _copySelection() async {
+    final text = await _session.copySelection();
+    if (text != null && text.isNotEmpty) {
+      await Clipboard.setData(ClipboardData(text: text));
     }
   }
 
-  Future<void> _runSession() async {
-    _vt?.close();
-    _vt = null;
-
-    setState(() {
-      _busy = true;
-      _status = 'looking for assets…';
-      _frame = VtFrame.empty(cols: _layoutCols, rows: _layoutRows);
-    });
-
-    try {
-      final assets = _locateAssets();
-      if (assets == null) {
-        setState(() {
-          _status = 'missing host.so / kernel.wasm / loom.tar';
-          _busy = false;
-        });
-        return;
-      }
-      if (assets.vtLib == null) {
-        setState(() {
-          _status = 'missing libghostty-vt.so';
-          _busy = false;
-        });
-        return;
-      }
-      if (assets.image == null) {
-        setState(() {
-          _status = 'missing loom.tar';
-          _busy = false;
-        });
-        return;
-      }
-      setState(() => _status = 'opening vt…');
-      final vt = GhosttyVtSession.open(
-        libraryPath: assets.vtLib,
-        cols: _layoutCols,
-        rows: _layoutRows,
-      );
-      // Pixel cell size for image protocols / size reports.
-      vt.resize(
-        _layoutCols,
-        _layoutRows,
-        cellW: _metrics.cellWidth.round(),
-        cellH: _metrics.cellHeight.round(),
-      );
-      _vt = vt;
-
-      vt.writeText(
-        '\x1b[1;32magentos\x1b[0m · flutter · libghostty-vt\r\n'
-        '\x1b[90mgrid ${vt.cols}×${vt.rows}  '
-        'cell ${_metrics.cellWidth.round()}×${_metrics.cellHeight.round()}  '
-        'font ${_metrics.fontSize.round()}pt  '
-        '${_metrics.fontFamily}\x1b[0m\r\n',
-      );
-      _paintVt(vt);
-
-      final imageName = assets.image!.split(Platform.pathSeparator).last;
-      setState(() => _status = 'boot $imageName…');
-      final vm = await AgentOsVm.bootFromFiles(
-        kernelPath: assets.kernel,
-        imagePath: assets.image,
-        libraryPath: assets.hostLib,
-      );
-      try {
-        for (var i = 0; i < 64; i++) {
-          final s = await vm.tick();
-          if (s == AgentOsTickState.exited || s == AgentOsTickState.waiting) {
-            break;
-          }
-        }
-        final bootBytes = await vm.takeOutput();
-        _vtBanner(vt, 'boot ($imageName)');
-        if (bootBytes.isEmpty) {
-          vt.writeText('\x1b[90m(quiet shell)\x1b[0m\r\n');
-        } else {
-          _vtWriteOutput(vt, bootBytes);
-        }
-        _paintVt(vt);
-
-        setState(() => _status = 'running…');
-
-        Future<void> runCmd(String cmd) async {
-          final r = await vm.exec(cmd);
-          _vtBanner(vt, '$cmd  ·  ${r.exitCode}');
-          _vtWriteOutput(vt, r.stdout);
-          if (r.stderr.isNotEmpty) {
-            vt.writeText('\x1b[31m');
-            _vtWriteOutput(vt, r.stderr);
-            vt.writeText('\x1b[0m');
-          }
-          _paintVt(vt);
-        }
-
-        await runCmd('echo Hello from AgentOS');
-        await runCmd('uname -a');
-        await runCmd('ls /bin | head -n 20');
-
-        _vtBanner(vt, 'style');
-        vt.writeText(
-          'plain  \x1b[1mbold\x1b[0m  \x1b[32mgreen\x1b[0m  '
-          '\x1b[38;2;255;160;60morange\x1b[0m  \x1b[4munderline\x1b[0m\r\n',
-        );
-        _paintVt(vt);
-
-        setState(() => _status = 'ok  ${vt.cols}×${vt.rows}');
-      } finally {
-        await vm.close();
-      }
-    } catch (e, st) {
-      final msg = 'error: $e';
-      try {
-        _vt?.writeText('\r\n\x1b[1;31m$msg\x1b[0m\r\n');
-        _vt?.writeText(st.toString());
-        if (_vt != null) _paintVt(_vt!);
-      } catch (_) {}
-      setState(() => _status = msg);
-    } finally {
-      if (mounted) setState(() => _busy = false);
+  Future<void> _pasteClipboard() async {
+    final data = await Clipboard.getData(Clipboard.kTextPlain);
+    final text = data?.text;
+    if (text != null && text.isNotEmpty) {
+      await _session.onPaste(text);
     }
+  }
+
+  void _onFocusChange(bool gained) {
+    setState(() => _focused = gained);
+    unawaited(_session.onFocus(gained));
+  }
+
+  String get _statusText {
+    if (!_session.started && !_session.busy) {
+      final assets = _locateAssets();
+      if (assets == null) return 'missing host.so / kernel.wasm';
+      if (assets.vtLib == null) return 'missing libghostty-vt.so';
+      if (assets.image == null) return 'missing loom.tar';
+    }
+    return _session.statusLine;
   }
 
   @override
   Widget build(BuildContext context) {
+    final accent =
+        _session.bellFlash ? VtTheme.chromeBell : VtTheme.chromeAccent;
+    final busy = _session.busy || _starting;
+
     return Focus(
       autofocus: true,
-      onFocusChange: (v) => setState(() => _focused = v),
+      onFocusChange: _onFocusChange,
+      onKeyEvent: _onKey,
       child: Scaffold(
         backgroundColor: VtTheme.background,
         body: Column(
@@ -320,10 +281,15 @@ class _HomePageState extends State<HomePage> {
             Container(
               height: 28,
               padding: const EdgeInsets.symmetric(horizontal: 10),
-              decoration: const BoxDecoration(
+              decoration: BoxDecoration(
                 color: VtTheme.chromeBg,
                 border: Border(
-                  bottom: BorderSide(color: VtTheme.chromeBorder, width: 1),
+                  bottom: BorderSide(
+                    color: _session.bellFlash
+                        ? VtTheme.chromeBell
+                        : VtTheme.chromeBorder,
+                    width: 1,
+                  ),
                 ),
               ),
               child: Row(
@@ -335,14 +301,14 @@ class _HomePageState extends State<HomePage> {
                       fontFamilyFallback: VtMetrics.fontFamilyFallback,
                       fontSize: 12,
                       fontWeight: FontWeight.w600,
-                      color: VtTheme.chromeAccent,
+                      color: accent,
                       height: 1,
                     ),
                   ),
                   const SizedBox(width: 10),
                   Expanded(
                     child: Text(
-                      _status,
+                      _statusText,
                       maxLines: 1,
                       overflow: TextOverflow.ellipsis,
                       style: TextStyle(
@@ -354,7 +320,7 @@ class _HomePageState extends State<HomePage> {
                       ),
                     ),
                   ),
-                  if (_busy)
+                  if (busy)
                     const SizedBox(
                       width: 12,
                       height: 12,
@@ -365,7 +331,7 @@ class _HomePageState extends State<HomePage> {
                     )
                   else
                     TextButton(
-                      onPressed: _runSession,
+                      onPressed: _rerun,
                       style: TextButton.styleFrom(
                         foregroundColor: VtTheme.chromeDim,
                         padding: const EdgeInsets.symmetric(horizontal: 8),
@@ -387,7 +353,6 @@ class _HomePageState extends State<HomePage> {
             Expanded(
               child: LayoutBuilder(
                 builder: (context, constraints) {
-                  // Defer layout→resize to after frame to avoid setState during build.
                   final size = Size(
                     constraints.maxWidth,
                     constraints.maxHeight,
@@ -395,11 +360,55 @@ class _HomePageState extends State<HomePage> {
                   WidgetsBinding.instance.addPostFrameCallback((_) {
                     if (mounted) _onSurfaceLayout(size);
                   });
-                  return VtView(
-                    frame: _frame,
-                    metrics: _metrics,
-                    padding: _gridPadding,
-                    focused: _focused,
+                  return Listener(
+                    onPointerSignal: (signal) {
+                      if (signal is PointerScrollEvent) {
+                        unawaited(
+                          _session.onScroll(signal.scrollDelta.dy),
+                        );
+                      }
+                    },
+                    onPointerDown: (e) {
+                      unawaited(_session.onPointer(
+                        kind: kSelectionGesturePress,
+                        x: e.localPosition.dx,
+                        y: e.localPosition.dy,
+                        padL: _gridPadding.left.round(),
+                        padT: _gridPadding.top.round(),
+                      ));
+                    },
+                    onPointerMove: (e) {
+                      if (e.down) {
+                        unawaited(_session.onPointer(
+                          kind: kSelectionGestureDrag,
+                          x: e.localPosition.dx,
+                          y: e.localPosition.dy,
+                          padL: _gridPadding.left.round(),
+                          padT: _gridPadding.top.round(),
+                        ));
+                      }
+                    },
+                    onPointerUp: (e) {
+                      unawaited(_session.onPointer(
+                        kind: kSelectionGestureRelease,
+                        x: e.localPosition.dx,
+                        y: e.localPosition.dy,
+                        padL: _gridPadding.left.round(),
+                        padT: _gridPadding.top.round(),
+                      ));
+                    },
+                    child: AnimatedBuilder(
+                      animation: _blink,
+                      builder: (context, _) {
+                        return VtView(
+                          frame: _session.frame,
+                          metrics: _metrics,
+                          padding: _gridPadding,
+                          focused: _focused,
+                          blinkPhase: _blink.value >= 0.5,
+                        );
+                      },
+                    ),
                   );
                 },
               ),

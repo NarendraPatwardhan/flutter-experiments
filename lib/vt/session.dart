@@ -6,6 +6,7 @@ import 'dart:ui' show Color;
 import '../agent_os/bindings.dart' show freePtr, mallocBytes;
 import 'bindings.dart';
 import 'frame.dart';
+import 'render.dart';
 import 'theme.dart';
 
 /// Defaults when the terminal has no OSC/theme colors set (Ghostty-like dark).
@@ -192,300 +193,24 @@ class GhosttyVtSession {
   }
 
   /// Snapshot viewport cells + cursor into a pure-Dart [VtFrame].
+  ///
+  /// Delegates to [projectRenderState] (G1: full style, selection, cursor attrs).
   VtFrame snapshot() {
     _ensureOpen();
-    final rc = _native.renderStateUpdate(_renderState, _terminal);
-    if (rc != kGhosttySuccess) {
-      throw StateError('ghostty_render_state_update failed: $rc');
-    }
-
-    final colsPtr = mallocBytes<Uint16>(1, sizeOf<Uint16>());
-    final rowsPtr = mallocBytes<Uint16>(1, sizeOf<Uint16>());
-    final bgPtr = mallocBytes<GhosttyColorRgb>(1, sizeOf<GhosttyColorRgb>());
-    final fgPtr = mallocBytes<GhosttyColorRgb>(1, sizeOf<GhosttyColorRgb>());
-    final boolPtr = mallocBytes<Uint8>(1, sizeOf<Uint8>());
-    final u16Ptr = mallocBytes<Uint16>(1, sizeOf<Uint16>());
-    final i32Ptr = mallocBytes<Int32>(1, sizeOf<Int32>());
-    final u32Ptr = mallocBytes<Uint32>(1, sizeOf<Uint32>());
-    final rowIterSlot =
-        mallocBytes<Pointer<Void>>(1, sizeOf<Pointer<Void>>());
-    final cellsSlot =
-        mallocBytes<Pointer<Void>>(1, sizeOf<Pointer<Void>>());
-    final utf8Scratch = mallocBytes<Uint8>(64, sizeOf<Uint8>());
-    final bufferPtr = mallocBytes<GhosttyBuffer>(1, sizeOf<GhosttyBuffer>());
-    final codepoints = mallocBytes<Uint32>(16, sizeOf<Uint32>());
-
-    try {
-      _check(_native.renderStateGet(
-        _renderState,
-        kRenderDataCols,
-        colsPtr.cast(),
-      ));
-      _check(_native.renderStateGet(
-        _renderState,
-        kRenderDataRows,
-        rowsPtr.cast(),
-      ));
-      final c = colsPtr.value;
-      final r = rowsPtr.value;
-
-      Color bg = kVtDefaultBg;
-      Color fg = kVtDefaultFg;
-      var grc = _native.renderStateGet(
-        _renderState,
-        kRenderDataColorBackground,
-        bgPtr.cast(),
-      );
-      if (grc == kGhosttySuccess) {
-        bg = Color.fromARGB(255, bgPtr.ref.r, bgPtr.ref.g, bgPtr.ref.b);
-      }
-      grc = _native.renderStateGet(
-        _renderState,
-        kRenderDataColorForeground,
-        fgPtr.cast(),
-      );
-      if (grc == kGhosttySuccess) {
-        fg = Color.fromARGB(255, fgPtr.ref.r, fgPtr.ref.g, fgPtr.ref.b);
-      }
-
-      boolPtr.value = 0;
-      _native.renderStateGet(
-        _renderState,
-        kRenderDataCursorVisible,
-        boolPtr.cast(),
-      );
-      final cursorVisible = boolPtr.value != 0;
-
-      boolPtr.value = 0;
-      _native.renderStateGet(
-        _renderState,
-        kRenderDataCursorViewportHasValue,
-        boolPtr.cast(),
-      );
-      final cursorInViewport = boolPtr.value != 0;
-
-      int? cx;
-      int? cy;
-      var cursorStyle = VtCursorStyle.block;
-      if (cursorVisible && cursorInViewport) {
-        _native.renderStateGet(
-          _renderState,
-          kRenderDataCursorViewportX,
-          u16Ptr.cast(),
-        );
-        cx = u16Ptr.value;
-        _native.renderStateGet(
-          _renderState,
-          kRenderDataCursorViewportY,
-          u16Ptr.cast(),
-        );
-        cy = u16Ptr.value;
-        i32Ptr.value = kCursorStyleBlock;
-        _native.renderStateGet(
-          _renderState,
-          kRenderDataCursorVisualStyle,
-          i32Ptr.cast(),
-        );
-        cursorStyle = switch (i32Ptr.value) {
-          kCursorStyleBar => VtCursorStyle.bar,
-          kCursorStyleUnderline => VtCursorStyle.underline,
-          kCursorStyleBlockHollow => VtCursorStyle.blockHollow,
-          _ => VtCursorStyle.block,
-        };
-      }
-
-      // Seed row iterator from render state (resets to before first row).
-      rowIterSlot.value = _rowIter;
-      _check(_native.renderStateGet(
-        _renderState,
-        kRenderDataRowIterator,
-        rowIterSlot.cast(),
-      ));
-      // get may rewrite the handle; keep our field in sync.
-      _rowIter = rowIterSlot.value;
-
-      final cells = List<VtCell>.filled(c * r, const VtCell());
-      var y = 0;
-      while (_native.rowIteratorNext(_rowIter) && y < r) {
-        cellsSlot.value = _cells;
-        final cellRc = _native.rowGet(
-          _rowIter,
-          kRowDataCells,
-          cellsSlot.cast(),
-        );
-        if (cellRc != kGhosttySuccess) {
-          y++;
-          continue;
-        }
-        _cells = cellsSlot.value;
-
-        var x = 0;
-        while (_native.rowCellsNext(_cells) && x < c) {
-          cells[y * c + x] = _readCell(
-            bg: bg,
-            fg: fg,
-            u32Ptr: u32Ptr,
-            bgPtr: bgPtr,
-            fgPtr: fgPtr,
-            utf8Scratch: utf8Scratch,
-            bufferPtr: bufferPtr,
-            codepoints: codepoints,
-          );
-          x++;
-        }
-        // Pad remaining columns if iterator ended early.
-        while (x < c) {
-          cells[y * c + x] = const VtCell();
-          x++;
-        }
-
-        // Clear row dirty.
-        boolPtr.value = 0;
-        _native.rowSet(_rowIter, kRowOptionDirty, boolPtr.cast());
-        y++;
-      }
-
-      // Clear global dirty.
-      i32Ptr.value = kRenderDirtyFalse;
-      _native.renderStateSet(
-        _renderState,
-        kRenderOptionDirty,
-        i32Ptr.cast(),
-      );
-
-      cols = c;
-      rows = r;
-      return VtFrame(
-        cols: c,
-        rows: r,
-        cells: cells,
-        background: bg,
-        foreground: fg,
-        cursorX: cx,
-        cursorY: cy,
-        cursorVisible: cursorVisible && cursorInViewport,
-        cursorStyle: cursorStyle,
-      );
-    } finally {
-      freePtr(colsPtr);
-      freePtr(rowsPtr);
-      freePtr(bgPtr);
-      freePtr(fgPtr);
-      freePtr(boolPtr);
-      freePtr(u16Ptr);
-      freePtr(i32Ptr);
-      freePtr(u32Ptr);
-      freePtr(rowIterSlot);
-      freePtr(cellsSlot);
-      freePtr(utf8Scratch);
-      freePtr(bufferPtr);
-      freePtr(codepoints);
-    }
-  }
-
-  VtCell _readCell({
-    required Color bg,
-    required Color fg,
-    required Pointer<Uint32> u32Ptr,
-    required Pointer<GhosttyColorRgb> bgPtr,
-    required Pointer<GhosttyColorRgb> fgPtr,
-    required Pointer<Uint8> utf8Scratch,
-    required Pointer<GhosttyBuffer> bufferPtr,
-    required Pointer<Uint32> codepoints,
-  }) {
-    u32Ptr.value = 0;
-    _native.rowCellsGet(_cells, kCellDataGraphemesLen, u32Ptr.cast());
-    final glen = u32Ptr.value;
-    if (glen == 0) {
-      Color? cellBg;
-      final bgRc = _native.rowCellsGet(
-        _cells,
-        kCellDataBgColor,
-        bgPtr.cast(),
-      );
-      if (bgRc == kGhosttySuccess) {
-        cellBg = Color.fromARGB(255, bgPtr.ref.r, bgPtr.ref.g, bgPtr.ref.b);
-      }
-      return VtCell(bg: cellBg);
-    }
-
-    // Prefer UTF-8 buffer path.
-    bufferPtr.ref
-      ..ptr = utf8Scratch
-      ..cap = 64
-      ..len = 0;
-    var text = '';
-    final utfRc = _native.rowCellsGet(
-      _cells,
-      kCellDataGraphemesUtf8,
-      bufferPtr.cast(),
+    final frame = projectRenderState(
+      native: _native,
+      terminal: _terminal,
+      renderState: _renderState,
+      rowIter: _rowIter,
+      cells: _cells,
+      onHandles: (rowIter, cells) {
+        _rowIter = rowIter.cast<Void>();
+        _cells = cells.cast<Void>();
+      },
     );
-    if (utfRc == kGhosttySuccess && bufferPtr.ref.len > 0) {
-      text = utf8.decode(
-        utf8Scratch.asTypedList(bufferPtr.ref.len),
-        allowMalformed: true,
-      );
-    } else if (utfRc == kGhosttyOutOfSpace) {
-      final need = bufferPtr.ref.len;
-      final big = mallocBytes<Uint8>(need, sizeOf<Uint8>());
-      try {
-        bufferPtr.ref
-          ..ptr = big
-          ..cap = need
-          ..len = 0;
-        final rc2 = _native.rowCellsGet(
-          _cells,
-          kCellDataGraphemesUtf8,
-          bufferPtr.cast(),
-        );
-        if (rc2 == kGhosttySuccess && bufferPtr.ref.len > 0) {
-          text = utf8.decode(
-            big.asTypedList(bufferPtr.ref.len),
-            allowMalformed: true,
-          );
-        }
-      } finally {
-        freePtr(big);
-      }
-    } else {
-      // Fallback: codepoint buffer (first codepoint only for paint).
-      final n = glen > 16 ? 16 : glen;
-      _native.rowCellsGet(
-        _cells,
-        kCellDataGraphemesBuf,
-        codepoints.cast(),
-      );
-      final units = <int>[];
-      for (var i = 0; i < n; i++) {
-        final cp = codepoints[i];
-        if (cp == 0) break;
-        units.add(cp);
-      }
-      if (units.isNotEmpty) {
-        text = String.fromCharCodes(units);
-      }
-    }
-
-    Color? cellFg;
-    Color? cellBg;
-    final fgRc = _native.rowCellsGet(
-      _cells,
-      kCellDataFgColor,
-      fgPtr.cast(),
-    );
-    if (fgRc == kGhosttySuccess) {
-      cellFg = Color.fromARGB(255, fgPtr.ref.r, fgPtr.ref.g, fgPtr.ref.b);
-    }
-    final bgRc = _native.rowCellsGet(
-      _cells,
-      kCellDataBgColor,
-      bgPtr.cast(),
-    );
-    if (bgRc == kGhosttySuccess) {
-      cellBg = Color.fromARGB(255, bgPtr.ref.r, bgPtr.ref.g, bgPtr.ref.b);
-    }
-
-    return VtCell(text: text, fg: cellFg, bg: cellBg);
+    cols = frame.cols;
+    rows = frame.rows;
+    return frame;
   }
 
   void close() {
@@ -503,11 +228,5 @@ class GhosttyVtSession {
 
   void _ensureOpen() {
     if (_closed) throw StateError('GhosttyVtSession is closed');
-  }
-
-  void _check(int rc) {
-    if (rc != kGhosttySuccess) {
-      throw StateError('libghostty-vt error: $rc');
-    }
   }
 }

@@ -16,4 +16,10 @@ abstract final class VtTheme {
   static const Color chromeAccent = Color(0xFF7CDE9A);
   static const Color chromeBorder = Color(0xFF2A2A2A);
   static const Color chromeDim = Color(0xFF606060);
+
+  /// Bell flash highlight on chrome.
+  static const Color chromeBell = Color(0xFFE8C070);
+
+  /// Optional selection tint when not using pure invert.
+  static const Color selection = Color(0x553A6EA5);
 }

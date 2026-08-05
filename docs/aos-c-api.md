@@ -9,6 +9,7 @@ Related:
 - Permanent rules: `SYSTEM.md`, `AGENTS.md`
 - Current first-cut surface: `docs/native-host-ffi.md`, `native/agentos_flutter_host/include/agentos_flutter_host.h`
 - Elixir reference: `AgentOS.Host.Nif` over `host::KernelHost` (agent-os pin)
+- Terminal embed (libghostty-vt): `docs/ghostty-vt-embed.md`
 
 ---
 
