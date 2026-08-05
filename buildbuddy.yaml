@@ -1,10 +1,7 @@
-# BuildBuddy Workflows CI (optional). Requires the BuildBuddy GitHub app on the
-# repo. Local `bb build --config=buildbuddy` does not need this file.
-#
-# The workflow runner is the Bazel coordinator; Flutter actions execute under
-# the RBE image pinned in `.bazelrc` (--config=buildbuddy).
+# BuildBuddy Workflows — runs after push when the GitHub app is connected.
+# This is the preferred "fully remote coordinator" path for CI.
 actions:
-  - name: "Flutter web"
+  - name: "Flutter web (remote)"
     container_image: "ubuntu-20.04"
     triggers:
       push:
@@ -15,5 +12,5 @@ actions:
         branches:
           - "*"
     steps:
-      - run: "bazel build --config=buildbuddy //:app.web"
-      - run: "bazel test --config=buildbuddy //:widget_test"
+      - run: "bb build //:app.web"
+      - run: "bb test //:widget_test"

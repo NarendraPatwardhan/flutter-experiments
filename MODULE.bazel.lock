@@ -179,7 +179,7 @@
     "@@rules_flutter+//flutter:extensions.bzl%flutter": {
       "general": {
         "bzlTransitiveDigest": "lQUfT64j5RrfdhXGnH5A12lonb9meu2Kp6cDxIAJQaY=",
-        "usagesDigest": "qDiAEhxgLla5ndtD/h2Dcs+fUwppzSoh2VAZhSpWias=",
+        "usagesDigest": "Sbucr+U3lLOtrMlE39RQnDmAeq+KIJCVeo73qPB6Jhw=",
         "recordedFileInputs": {},
         "recordedDirentsInputs": {},
         "envVariables": {},
@@ -191,7 +191,6 @@
               "integrity": "",
               "flutter_version": "3.41.7",
               "precache": [
-                "linux",
                 "web"
               ]
             }
@@ -203,7 +202,6 @@
               "integrity": "",
               "flutter_version": "3.41.7",
               "precache": [
-                "linux",
                 "web"
               ]
             }
@@ -215,7 +213,6 @@
               "integrity": "",
               "flutter_version": "3.41.7",
               "precache": [
-                "linux",
                 "web"
               ]
             }
