@@ -41,8 +41,6 @@ git_override(
         # Zig/wasi default 16MiB stack → Wasm initial memory; match Rust guests (1MiB)
         # until agent-os upstream ships the same linkopt.
         "//third_party/agent-os:0004-sqlite-1mib-stack.patch",
-        # Loom image: drop luau-analyze (Analysis zig c++ fails under nested @agent-os+).
-        "//third_party/agent-os:0005-loom-omit-luau-analyze.patch",
     ],
     remote = "https://github.com/NarendraPatwardhan/agent-os.git",
 )

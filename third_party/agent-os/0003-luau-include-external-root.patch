@@ -1,28 +1,22 @@
 diff --git a/memcontainers/programs/luau/glue/BUILD.bazel b/memcontainers/programs/luau/glue/BUILD.bazel
-index 96cd2b7..655a2cc 100644
+index 96cd2b7..b0ed828 100644
 --- a/memcontainers/programs/luau/glue/BUILD.bazel
 +++ b/memcontainers/programs/luau/glue/BUILD.bazel
-@@ -104,8 +104,10 @@ zig_binary(
-     copts = [
+@@ -105,7 +105,7 @@ zig_binary(
          # Force Luau's public C API to extern "C" so the Zig entry's C-mode @cImport links it (else
          # the API is C++-mangled, resolves to `env` imports, and the VM is dead-stripped).
-+        "-Iexternal/agent-os+/memcontainers/programs/luau/glue",
-+        "-Imemcontainers/programs/luau/glue",
          "-include",
 -        "memcontainers/programs/luau/glue/force_extern_c.h",
-+        "force_extern_c.h",
++        "external/agent-os+/memcontainers/programs/luau/glue/force_extern_c.h",
          "-fno-exceptions",
          "-fno-rtti",
      ],
-@@ -184,8 +186,10 @@ zig_binary(
-     ],
+@@ -185,7 +185,7 @@ zig_binary(
      copts = [
          # Force-include the analysis EH shim into every TU (mc_analysis_abort + try/catch neutralize).
-+        "-Iexternal/agent-os+/memcontainers/programs/luau/glue",
-+        "-Imemcontainers/programs/luau/glue",
          "-include",
 -        "memcontainers/programs/luau/glue/analysis_eh_shim.h",
-+        "analysis_eh_shim.h",
++        "external/agent-os+/memcontainers/programs/luau/glue/analysis_eh_shim.h",
          "-fno-exceptions",
          "-fno-rtti",
      ],
