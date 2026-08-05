@@ -143,7 +143,6 @@ class VtPainter extends CustomPainter {
             fontSize: metrics.fontSize,
             height: 1.0,
             forceStrutHeight: true,
-            letterSpacing: 0,
           ),
         )..layout();
 
