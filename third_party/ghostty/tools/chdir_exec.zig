@@ -1,6 +1,6 @@
-//! Run a program after chdir to a root directory.
+//! Run a program with a given working directory.
 //! Usage: chdir_exec <root> <program> [args...]
-//! Zig 0.16: std.process.Init + std.process.spawn.
+//! Zig 0.16 process.Init / process.spawn.
 
 const std = @import("std");
 
@@ -15,7 +15,7 @@ pub fn main(init: std.process.Init) !void {
     const root = args_iter.next() orelse usage();
     const program_rel = args_iter.next() orelse usage();
 
-    const cwd = try std.fs.cwd().realpathAlloc(gpa, ".");
+    const cwd = try std.process.currentPathAlloc(io, gpa);
     defer gpa.free(cwd);
 
     const abs_root = try absPath(gpa, cwd, root);
