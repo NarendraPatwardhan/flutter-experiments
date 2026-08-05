@@ -167,7 +167,8 @@ The developer host then downloads the package and stages `dist/linux`.
 | `SYSTEM.md` | This document — system intent and permanent rules. |
 | `lib/` | Dart/Flutter application source. |
 | `linux/` | Linux runner and CMake shell for Flutter. |
-| `third_party/agent-os/` | Patches for the git pin (when AgentOS is wired). |
+| `third_party/agent-os/` | Patches for the git pin. |
+| `LICENSE` | Apache-2.0 for this product (opyt.cloud). |
 | `dist/` | Local stage only (gitignored). |
 
 Do not keep a second “old approach” tree in this repository. One product tree only.
@@ -207,15 +208,18 @@ Do not keep a second “old approach” tree in this repository. One product tre
 
 | Phase | Outcome |
 |-------|---------|
-| **A — Host proven** | rules_flutter Linux app builds on BuildBuddy; runs from `dist/linux`. |
-| **B — Repo clean** | Only the Bazel remote approach remains; docs match practice. |
-| **C — AgentOS pin** | `git_override` pin + patches; `@agent-os//…` labels resolve in the graph. |
+| **A — Host proven** | rules_flutter Linux app builds on BuildBuddy; runs from `dist/linux`. **Done.** |
+| **B — Repo clean** | Only the Bazel remote approach remains; docs match practice. **Done.** |
+| **C — AgentOS pin** | `git_override` pin + patches; root hermetic_cc; `//:agentos_kernel` builds on BuildBuddy. |
 | **D — Runtime assets** | Product packages needed AgentOS runtime outputs with the host. |
 | **E — Guest / image** | Product guests and image layers as required for the terminal computer. |
 | **F — Terminal UX** | Terminal UI (for example libghostty integration) in the Flutter host. |
 | **G — Mobile** | Same product idea on mobile platforms. |
 
 Do not skip the pin model in phase C. Do not replace phase C with a permanent local path override.
+
+Phase C smoke target: `//:agentos_kernel` → `@agent-os//memcontainers/kernel/rust:kernel`.
+
 
 ---
 
@@ -233,10 +237,11 @@ The system is on the correct path when all of these are true:
 
 1. A developer can push git and get a Linux bundle from BuildBuddy without local product analysis.
 2. The developer can run the staged Linux binary in a desktop session.
-3. AgentOS (when integrated) is a **git commit pin** in `MODULE.bazel`, not a local monorepo path.
-4. Product code uses `@agent-os//…` labels for AgentOS build outputs.
+3. AgentOS is a **git commit pin** in `MODULE.bazel`, not a local monorepo path.
+4. Product targets use `@agent-os//…` labels for AgentOS build outputs (example: `//:agentos_kernel`).
 5. No release tarball of AgentOS replaces the Bazel graph as the source of those outputs.
 6. Web targets, if any, stay optional.
+7. This product ships under Apache-2.0 (opyt.cloud). AgentOS remains BSL 1.1 upstream.
 
 ---
 

@@ -1,5 +1,15 @@
 load("@rules_flutter//flutter:defs.bzl", "flutter_app", "flutter_library", "flutter_test")
 
+package(default_visibility = ["//visibility:public"])
+
+# ---------------------------------------------------------------------------
+# AgentOS — git-pinned module smoke (built from @agent-os, not release zips)
+# ---------------------------------------------------------------------------
+filegroup(
+    name = "agentos_kernel",
+    srcs = ["@agent-os//memcontainers/kernel/rust:kernel"],
+)
+
 flutter_library(
     name = "lib",
     srcs = glob(["lib/**"]),

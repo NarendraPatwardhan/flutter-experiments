@@ -1,11 +1,12 @@
 # ---------------------------------------------------------------------------
 # Zero local analysis on the AGENT HOST:
-#   git push && bb remote --run_from_branch=main build //:app.web
+#   git push && bb remote --run_from_branch=main --os=linux --script '…'
 #
 # On the BuildBuddy remote runner (coordinator), Bazel must be able to run
 # rules_flutter SetupFlutterWorkspace as a *runner-local* action. Pure
 # spawn_strategy=remote alone breaks that mnemonic. Runner-local ≠ agent-local.
 #
+# AgentOS is a git_override pin; nested C/Zig needs sandbox mounts below.
 # Auth: bb login. Never put API keys here.
 # ---------------------------------------------------------------------------
 common --enable_bzlmod
@@ -14,10 +15,17 @@ common --enable_runfiles
 common --enable_platform_specific_config
 common --incompatible_strict_action_env
 common --incompatible_disallow_empty_glob=false
+common --registry=https://bcr.bazel.build/
 
 # Hermetic Java for analysis (on the remote runner under bb remote).
 common --java_runtime_version=remotejdk_21
 common --tool_java_runtime_version=remotejdk_21
+
+# Nested @agent-os C/C++/Zig (Zig caches under /tmp or home)
+build --sandbox_add_mount_pair=/tmp
+build --sandbox_add_mount_pair=/home
+common --copt=-w
+common --host_copt=-w
 
 build --verbose_failures
 
