@@ -1,6 +1,5 @@
 # Package marker so //third_party/uucode:… is loadable for @uucode http_archive.
 exports_files([
     "uucode.BUILD",
-    "0001-generate-build-config-file-import.patch",
+    "0001-single-module-imports.patch",
 ])
-

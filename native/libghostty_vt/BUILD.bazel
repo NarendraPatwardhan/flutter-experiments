@@ -19,25 +19,57 @@ zig_library(
     import_name = "terminal_options",
 )
 
-# --- uucode as one module (Zig 0.16: a file may only belong to one module) ---
-# generate.zig is patched to @import("build_config.zig"); Ghostty's uucode_config
-# is vendored as tools/build_config.zig in this package.
+# --- uucode (one module per compilation; shared source paths OK across targets) ---
+
+# Explicit labels so rules_zig includes every file in the module.
+UUCODE_GENERATE_SRCS = [
+    "@uucode//:src/ascii.zig",
+    "@uucode//:src/build_config.zig",
+    "@uucode//:src/code_point.zig",
+    "@uucode//:src/components.zig",
+    "@uucode//:src/config.zig",
+    "@uucode//:src/fields.zig",
+    "@uucode//:src/generate.zig",
+    "@uucode//:src/get.zig",
+    "@uucode//:src/grapheme.zig",
+    "@uucode//:src/multi_slice.zig",
+    "@uucode//:src/quirks.zig",
+    "@uucode//:src/root.zig",
+    "@uucode//:src/storage.zig",
+    "@uucode//:src/types.zig",
+    "@uucode//:src/utf8.zig",
+]
+
+UUCODE_LIB_SRCS = [
+    "@uucode//:src/ascii.zig",
+    "@uucode//:src/build_config.zig",
+    "@uucode//:src/code_point.zig",
+    "@uucode//:src/components.zig",
+    "@uucode//:src/config.zig",
+    "@uucode//:src/fields.zig",
+    "@uucode//:src/get.zig",
+    "@uucode//:src/grapheme.zig",
+    "@uucode//:src/multi_slice.zig",
+    "@uucode//:src/quirks.zig",
+    "@uucode//:src/root.zig",
+    "@uucode//:src/storage.zig",
+    "@uucode//:src/types.zig",
+    "@uucode//:src/utf8.zig",
+]
 
 zig_binary(
     name = "uucode_generate",
     main = "@uucode//:src/generate.zig",
-    srcs = ["@uucode//:zig_srcs"] + [
-        "tools/build_config.zig",
-    ],
+    srcs = UUCODE_GENERATE_SRCS,
     extra_srcs = ["@uucode//:ucd"],
 )
 
-# Codegen only: run generator with cwd = @uucode root (needs ucd/).
+# Run generator with cwd = @uucode root (UCD under ucd/).
 genrule(
     name = "gen_uucode_tables",
     srcs = ["@uucode//:tree"],
     tools = [":uucode_generate"],
-    outs = ["gen/uucode_tables.zig"],
+    outs = ["gen/tables.zig"],
     cmd = """
 set -euo pipefail
 ROOT=""
@@ -54,7 +86,7 @@ if [ -z "$$ROOT" ] || [ ! -d "$$ROOT/ucd" ]; then
   exit 1
 fi
 GEN=$(location :uucode_generate)
-OUT=$(location gen/uucode_tables.zig)
+OUT=$(location gen/tables.zig)
 GEN_ABS=$$(cd $$(dirname "$$GEN") && pwd)/$$(basename "$$GEN")
 OUT_ABS=$$(cd $$(dirname "$$OUT") && pwd)/$$(basename "$$OUT")
 cd "$$ROOT"
@@ -62,24 +94,14 @@ cd "$$ROOT"
 """,
 )
 
-# tables module consumed by uucode root (import name "tables")
-zig_library(
-    name = "uucode_tables",
-    main = ":gen/uucode_tables.zig",
-    srcs = ["@uucode//:zig_srcs"] + [
-        "tools/build_config.zig",
-    ],
-    import_name = "tables",
-)
-
+# uucode lib: root + support + generated tables.zig (same module file imports).
 zig_library(
     name = "uucode",
     main = "@uucode//:src/root.zig",
-    srcs = ["@uucode//:zig_srcs"] + [
-        "tools/build_config.zig",
+    srcs = UUCODE_LIB_SRCS + [
+        ":gen/tables.zig",
     ],
     import_name = "uucode",
-    deps = [":uucode_tables"],
 )
 
 # --- Ghostty unicode table generators ----------------------------------------
