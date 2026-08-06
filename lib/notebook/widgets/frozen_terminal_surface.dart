@@ -5,7 +5,7 @@ import '../../vt/painter.dart';
 import '../document.dart';
 import 'cell_chrome.dart';
 
-/// Frozen terminal — hard-cap + **guaranteed** internal scroll when tall.
+/// Frozen terminal — hard-cap + internal scroll; fully clipped to rounded cell.
 class FrozenTerminalSurface extends StatelessWidget {
   const FrozenTerminalSurface({
     super.key,
@@ -16,7 +16,6 @@ class FrozenTerminalSurface extends StatelessWidget {
   final TerminalFreezeCell cell;
   final VtMetrics metrics;
 
-  /// ~8 mono rows before scroll (forces in-cell scroll for long freezes).
   static const double maxBodyPx = 140;
   static const EdgeInsets pad = EdgeInsets.fromLTRB(8, 4, 8, 4);
 
@@ -38,8 +37,9 @@ class FrozenTerminalSurface extends StatelessWidget {
         fontFamily: fam,
         child: LayoutBuilder(
           builder: (context, constraints) {
-            final w = constraints.maxWidth;
-            // Explicit size so CustomPaint participates in scroll extent.
+            final w = constraints.maxWidth.isFinite
+                ? constraints.maxWidth
+                : 400.0;
             final paint = SizedBox(
               width: w,
               height: contentH,
@@ -55,22 +55,17 @@ class FrozenTerminalSurface extends StatelessWidget {
               ),
             );
 
+            // ClipRect + Material so scroll paint never escapes the cell.
             return SizedBox(
               height: bodyH,
               width: w,
               child: ClipRect(
+                clipBehavior: Clip.hardEdge,
                 child: needsScroll
-                    ? ScrollConfiguration(
-                        behavior: ScrollConfiguration.of(context).copyWith(
-                          scrollbars: true,
-                        ),
-                        child: SingleChildScrollView(
-                          primary: false,
-                          physics: const AlwaysScrollableScrollPhysics(
-                            parent: ClampingScrollPhysics(),
-                          ),
-                          child: paint,
-                        ),
+                    ? SingleChildScrollView(
+                        primary: false,
+                        physics: const ClampingScrollPhysics(),
+                        child: paint,
                       )
                     : paint,
               ),

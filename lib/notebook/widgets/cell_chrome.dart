@@ -3,10 +3,9 @@ import 'package:flutter/material.dart';
 import '../../vt/metrics.dart';
 import '../../vt/theme.dart';
 
-/// History cell chrome — Grok-style role distinction without boxed chips.
+/// History cell — uniform rounded stroke + quiet role text (no square chips).
 ///
-/// Left semantic accent bar + plain label (bullet language of Grok scrollback).
-/// Paper-thin outer border; content always clipped.
+/// Left accent is painted *inside* ClipRRect so top corners stay round.
 class CellChrome extends StatelessWidget {
   const CellChrome({
     super.key,
@@ -24,6 +23,7 @@ class CellChrome extends StatelessWidget {
   final String? fontFamily;
 
   static const double headerHeight = 22;
+  static const double radius = 8;
 
   static TextStyle mono(
     String? fam, {
@@ -48,7 +48,7 @@ class CellChrome extends StatelessWidget {
   static TextStyle accent(String? fam, {double size = 12}) => mono(
         fam,
         size: size,
-        color: VtTheme.chromeAccent,
+        color: VtTheme.chromeFg,
         weight: FontWeight.w600,
       );
 
@@ -64,17 +64,17 @@ class CellChrome extends StatelessWidget {
     final fam = fontFamily;
     final role = VtTheme.roleAccent(kindLabel);
     final border = VtTheme.chromeBorderHistory;
+    final r = BorderRadius.circular(radius);
 
     final header = SizedBox(
       height: headerHeight,
       child: Padding(
-        padding: const EdgeInsets.symmetric(horizontal: 10),
+        padding: const EdgeInsets.fromLTRB(8, 0, 10, 0),
         child: Row(
           children: [
-            // Grok-like bullet: solid glyph, role color — no square chip.
             Text(
-              '● ',
-              style: mono(fam, size: 10, color: role, weight: FontWeight.w600),
+              '· ',
+              style: mono(fam, size: 12, color: role, weight: FontWeight.w600),
             ),
             Text(
               kindLabel,
@@ -95,34 +95,36 @@ class CellChrome extends StatelessWidget {
         ? Expanded(child: ClipRect(child: child))
         : ClipRect(child: child);
 
-    return Container(
-      decoration: BoxDecoration(
-        color: VtTheme.cellHistoryBg,
-        borderRadius: BorderRadius.circular(6),
-        border: Border(
-          left: BorderSide(color: role.withOpacity(0.9), width: 3),
-          top: BorderSide(color: border),
-          right: BorderSide(color: border),
-          bottom: BorderSide(color: border),
+    // ClipRRect first so ALL corners round; border is uniform 1px.
+    // Accent bar is an *inner* strip (not a thick left BorderSide — that
+    // square-off the top-left/bottom-left radius in Flutter).
+    return ClipRRect(
+      borderRadius: r,
+      child: DecoratedBox(
+        decoration: BoxDecoration(
+          color: VtTheme.cellHistoryBg,
+          borderRadius: r,
+          border: Border.all(color: border, width: 1),
         ),
-      ),
-      clipBehavior: Clip.antiAlias,
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.stretch,
-        mainAxisSize: expandBody ? MainAxisSize.max : MainAxisSize.min,
-        children: [
-          header,
-          Divider(height: 1, thickness: 1, color: border.withOpacity(0.7)),
-          body,
-        ],
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.stretch,
+          mainAxisSize: expandBody ? MainAxisSize.max : MainAxisSize.min,
+          children: [
+            header,
+            Divider(
+              height: 1,
+              thickness: 1,
+              color: border.withOpacity(0.65),
+            ),
+            body,
+          ],
+        ),
       ),
     );
   }
 }
 
-/// Active bottom composer — rounded, semantic border, mode on bottom edge.
-///
-/// Mirrors Grok prompt chrome: ╭─╮ box, model/mode caption on the bottom rail.
+/// Active bottom composer — rounded box, neutral border, mode on bottom rail.
 class ActiveComposerChrome extends StatelessWidget {
   const ActiveComposerChrome({
     super.key,
@@ -132,7 +134,6 @@ class ActiveComposerChrome extends StatelessWidget {
     this.fontFamily,
   });
 
-  /// `terminal` | `ask` (drives semantic border + caption).
   final String modeKind;
   final Widget child;
   final bool focused;
@@ -145,48 +146,49 @@ class ActiveComposerChrome extends StatelessWidget {
   Widget build(BuildContext context) {
     final fam = fontFamily;
     final border = VtTheme.activeBorder(modeKind, focused: focused);
-    final role = VtTheme.roleAccent(modeKind);
+    final r = BorderRadius.circular(radius);
 
-    return Container(
-      decoration: BoxDecoration(
-        color: VtTheme.background,
-        borderRadius: BorderRadius.circular(radius),
-        border: Border.all(color: border, width: focused ? 1.25 : 1),
-      ),
-      clipBehavior: Clip.antiAlias,
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.stretch,
-        children: [
-          Expanded(child: ClipRect(child: child)),
-          // Bottom rail: mode sits on the border like Grok model caption.
-          SizedBox(
-            height: footerHeight,
-            child: DecoratedBox(
-              decoration: BoxDecoration(
-                border: Border(
-                  top: BorderSide(color: border.withOpacity(0.9)),
+    return ClipRRect(
+      borderRadius: r,
+      child: DecoratedBox(
+        decoration: BoxDecoration(
+          color: VtTheme.background,
+          borderRadius: r,
+          border: Border.all(color: border, width: focused ? 1.25 : 1),
+        ),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.stretch,
+          children: [
+            Expanded(child: ClipRect(child: child)),
+            SizedBox(
+              height: footerHeight,
+              child: DecoratedBox(
+                decoration: BoxDecoration(
+                  border: Border(
+                    top: BorderSide(color: border.withOpacity(0.85)),
+                  ),
                 ),
-              ),
-              child: Padding(
-                padding: const EdgeInsets.symmetric(horizontal: 10),
-                child: Row(
-                  children: [
-                    Text(
+                child: Padding(
+                  padding: const EdgeInsets.symmetric(horizontal: 10),
+                  child: Align(
+                    alignment: Alignment.centerLeft,
+                    child: Text(
                       modeKind,
                       style: CellChrome.mono(
                         fam,
                         size: 11,
-                        color: role.withOpacity(focused ? 0.9 : 0.55),
+                        color: focused
+                            ? VtTheme.chromeFg.withOpacity(0.75)
+                            : VtTheme.chromeMuted,
                         weight: FontWeight.w500,
                       ),
                     ),
-                    const Spacer(),
-                  ],
+                  ),
                 ),
               ),
             ),
-          ),
-        ],
+          ],
+        ),
       ),
     );
   }
