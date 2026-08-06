@@ -14,17 +14,15 @@ import 'live_terminal.dart';
 import 'nl_composer.dart';
 import 'top_bar.dart';
 
-/// Full notebook chrome: fixed top/bottom bars, history stack, pinned active cell.
+/// Machine notebook geometry (agreed model):
 ///
-/// Geometry (SYSTEM H1 / ui-northstar):
-/// ```
-/// [top bar fixed]
-/// [ Expanded body Column:
-///     Expanded: history ListView (oldest → newest). Empty = void above active.
-///     Active cell PINNED AT BOTTOM (fixed height, not residual Expanded)
-/// ]
-/// [bottom bar fixed]
-/// ```
+/// - **Empty history + terminal:** full-bleed active terminal (terminal-first).
+/// - **History present:** scrollable cells above (oldest top → newest above active);
+///   active cell pinned bottom, expand→cap.
+/// - **Ask mode:** active bottom is ask; live terminal sits in the region above
+///   (still one guest), history above that if any.
+///
+/// No fake void / "notebook" watermark.
 class NotebookShell extends StatefulWidget {
   const NotebookShell({
     super.key,
@@ -81,32 +79,27 @@ class _NotebookShellState extends State<NotebookShell> {
         if (!_historyScroll.hasClients) return;
         _historyScroll.animateTo(
           _historyScroll.position.maxScrollExtent,
-          duration: const Duration(milliseconds: 180),
+          duration: const Duration(milliseconds: 160),
           curve: Curves.easeOut,
         );
       });
     }
   }
 
-  /// Active region height from body height [h] and whether history has entries.
-  double _activeHeight(double h, bool historyEmpty) {
-    if (h <= 0) return 160;
-    if (historyEmpty) {
-      // Terminal-first: large bottom active cell; leave top void so structure is obvious.
-      return h * 0.78;
-    }
-    return ExpandCap.clampHeight(
-      desired: h * 0.45,
-      viewportHeight: h,
-      minHeight: 160,
-      maxFraction: 0.55,
+  Widget _liveTerminal({required bool focused}) {
+    return LiveTerminalView(
+      session: widget.session,
+      metrics: widget.metrics,
+      blinkPhase: widget.blinkPhase,
+      focused: focused,
+      onLayout: widget.onTerminalLayout,
     );
   }
 
-  Widget _historyList(List<NotebookHistoryEntry> history, double bodyH) {
+  Widget _historyList(double bodyH) {
+    final history = widget.notebook.history;
     final metrics = widget.metrics;
     final cap = (bodyH * 0.45).clamp(120.0, 360.0);
-
     return ListView.builder(
       controller: _historyScroll,
       padding: EdgeInsets.zero,
@@ -132,77 +125,63 @@ class _NotebookShellState extends State<NotebookShell> {
     );
   }
 
-  Widget _liveTerminal({required bool focused}) {
-    return LiveTerminalView(
-      session: widget.session,
-      metrics: widget.metrics,
-      blinkPhase: widget.blinkPhase,
-      focused: focused,
-      onLayout: widget.onTerminalLayout,
-    );
-  }
-
-  Widget _activeCell({
-    required double height,
-    required InputMode mode,
-  }) {
-    final metrics = widget.metrics;
-    final fam = metrics.fontFamily;
+  /// Active terminal cell (framed) filling [height] or expanding.
+  Widget _terminalActive({required bool expand, double? height}) {
+    final fam = widget.metrics.fontFamily;
     final cols = widget.session.frame.cols;
     final rows = widget.session.frame.rows;
     final sizeMeta = cols > 0 ? '${cols}×$rows' : null;
+    final frame = NotebookCellFrame(
+      kindLabel: 'terminal',
+      metaRight: sizeMeta,
+      active: widget.terminalFocused,
+      fontFamily: fam,
+      child: _liveTerminal(focused: widget.terminalFocused),
+    );
+    if (expand) {
+      return Expanded(child: frame);
+    }
+    return SizedBox(height: height, child: frame);
+  }
 
-    if (mode == InputMode.terminal) {
-      return SizedBox(
-        height: height,
-        child: NotebookCellFrame(
-          kindLabel: 'terminal',
-          metaRight: sizeMeta,
-          active: widget.terminalFocused,
-          fontFamily: fam,
-          child: _liveTerminal(
-            focused: widget.terminalFocused,
+  Widget _askActive(double bodyH) {
+    final fam = widget.metrics.fontFamily;
+    // Ask sits at bottom with expand-cap; live terminal fills remainder above.
+    final askH = ExpandCap.clampHeight(
+      desired: bodyH * 0.28,
+      viewportHeight: bodyH,
+      minHeight: 120,
+      maxFraction: 0.40,
+    );
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.stretch,
+      children: [
+        Expanded(
+          child: NotebookCellFrame(
+            kindLabel: 'terminal',
+            metaRight: 'live',
+            active: false,
+            fontFamily: fam,
+            child: _liveTerminal(focused: false),
           ),
         ),
-      );
-    }
-
-    // Natural language: machine still visible above ask composer.
-    final termH = height * 0.4;
-    final askH = height - termH;
-
-    return SizedBox(
-      height: height,
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.stretch,
-        children: [
-          SizedBox(
-            height: termH,
-            child: NotebookCellFrame(
-              kindLabel: 'terminal',
-              metaRight: 'live',
-              active: false,
+        SizedBox(
+          height: askH + NotebookCellFrame.headerHeight,
+          child: NotebookCellFrame(
+            kindLabel: 'ask',
+            metaRight: 'active',
+            active: true,
+            fontFamily: fam,
+            child: NlComposer(
+              controller: widget.nlController,
+              focusNode: widget.nlFocus,
+              onSubmit: widget.onNlSubmit,
               fontFamily: fam,
-              child: _liveTerminal(focused: false),
+              viewportHeight: askH,
             ),
           ),
-          SizedBox(
-            height: askH,
-            child: NotebookCellFrame(
-              kindLabel: 'ask',
-              active: true,
-              fontFamily: fam,
-              child: NlComposer(
-                controller: widget.nlController,
-                focusNode: widget.nlFocus,
-                onSubmit: widget.onNlSubmit,
-                fontFamily: fam,
-                viewportHeight: askH,
-              ),
-            ),
-          ),
-        ],
-      ),
+        ),
+      ],
     );
   }
 
@@ -210,9 +189,8 @@ class _NotebookShellState extends State<NotebookShell> {
   Widget build(BuildContext context) {
     final notebook = widget.notebook;
     final mode = notebook.mode;
-    final history = notebook.history;
+    final historyEmpty = notebook.history.isEmpty;
     final metrics = widget.metrics;
-    final historyEmpty = history.isEmpty;
 
     return ColoredBox(
       color: VtTheme.background,
@@ -232,19 +210,36 @@ class _NotebookShellState extends State<NotebookShell> {
             child: LayoutBuilder(
               builder: (context, constraints) {
                 final bodyH = constraints.maxHeight;
-                final activeH = _activeHeight(bodyH, historyEmpty);
+
+                // --- Terminal-first cold start: full-bleed active terminal ---
+                if (historyEmpty && mode == InputMode.terminal) {
+                  return _terminalActive(expand: true);
+                }
+
+                // --- Ask with no history yet: terminal + ask stacked ---
+                if (historyEmpty && mode == InputMode.naturalLanguage) {
+                  return _askActive(bodyH);
+                }
+
+                // --- History present: timeline above, active bottom-capped ---
+                final activeH = ExpandCap.clampHeight(
+                  desired: bodyH * 0.5,
+                  viewportHeight: bodyH,
+                  minHeight: 160,
+                  maxFraction: 0.55,
+                );
 
                 return Column(
                   crossAxisAlignment: CrossAxisAlignment.stretch,
                   children: [
-                    // History (or empty canvas / void) fills space above active.
-                    Expanded(
-                      child: historyEmpty
-                          ? _EmptyTimeline(fontFamily: metrics.fontFamily)
-                          : _historyList(history, bodyH),
-                    ),
-                    // Active cell pinned at bottom of body — fixed height.
-                    _activeCell(height: activeH, mode: mode),
+                    Expanded(child: _historyList(bodyH)),
+                    if (mode == InputMode.terminal)
+                      _terminalActive(expand: false, height: activeH)
+                    else
+                      SizedBox(
+                        height: activeH,
+                        child: _askActive(activeH),
+                      ),
                   ],
                 );
               },
@@ -256,31 +251,6 @@ class _NotebookShellState extends State<NotebookShell> {
             fontFamily: metrics.fontFamily,
           ),
         ],
-      ),
-    );
-  }
-}
-
-/// Void above the active cell when history is empty — makes notebook structure readable.
-class _EmptyTimeline extends StatelessWidget {
-  const _EmptyTimeline({this.fontFamily});
-  final String? fontFamily;
-
-  @override
-  Widget build(BuildContext context) {
-    return ColoredBox(
-      color: const Color(0xFF101010),
-      child: Center(
-        child: Text(
-          'notebook',
-          style: TextStyle(
-            fontFamily: fontFamily ?? 'monospace',
-            fontFamilyFallback: VtMetrics.fontFamilyFallback,
-            fontSize: 11,
-            letterSpacing: 0.14,
-            color: VtTheme.chromeDim.withOpacity(0.5),
-          ),
-        ),
       ),
     );
   }
