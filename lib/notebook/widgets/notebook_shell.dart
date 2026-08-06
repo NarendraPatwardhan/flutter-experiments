@@ -95,7 +95,6 @@ class _NotebookShellState extends State<NotebookShell> {
   @override
   Widget build(BuildContext context) {
     final notebook = widget.notebook;
-    final isTerm = notebook.mode == InputMode.terminal;
     final fam = widget.metrics.fontFamily;
     final shellReady = widget.session.shellReady;
 
@@ -115,7 +114,7 @@ class _NotebookShellState extends State<NotebookShell> {
             child: LayoutBuilder(
               builder: (context, constraints) {
                 final bodyH = constraints.maxHeight;
-                final activeH = _activeHeight(bodyH, isTerm);
+                final activeH = _activeHeight(bodyH);
 
                 return Padding(
                   padding: const EdgeInsets.fromLTRB(12, 4, 12, 8),
