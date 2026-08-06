@@ -278,7 +278,7 @@ class _EmptyTimeline extends StatelessWidget {
             fontFamilyFallback: VtMetrics.fontFamilyFallback,
             fontSize: 11,
             letterSpacing: 0.14,
-            color: VtTheme.chromeDim.withValues(alpha: 0.5),
+            color: VtTheme.chromeDim.withOpacity(0.5),
           ),
         ),
       ),
