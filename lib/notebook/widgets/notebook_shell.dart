@@ -7,18 +7,18 @@ import '../../vt/theme.dart';
 import '../controller.dart';
 import '../expand_cap.dart';
 import '../model.dart';
+import 'active_input.dart';
 import 'bottom_bar.dart';
-import 'cell_frame.dart';
-import 'live_terminal.dart';
-import 'nl_composer.dart';
 import 'timeline.dart';
 import 'top_bar.dart';
 
-/// Machine notebook surface.
+/// Machine notebook surface (docs/ui-northstar.md).
 ///
-/// - Empty + terminal: full-bleed active terminal (no fake void).
-/// - Timeline present: history scrolls above; active bottom-capped.
-/// - Ask mode: live terminal above ask cell at bottom.
+/// Geometry:
+/// - Empty + terminal → full-bleed active terminal (no cell chrome).
+/// - Empty + ask → active ask bottom-anchored (air above).
+/// - Timeline → reverse list glued to active; void only above oldest.
+/// - Active is terminal **or** ask — never a split stack.
 class NotebookShell extends StatefulWidget {
   const NotebookShell({
     super.key,
@@ -27,11 +27,10 @@ class NotebookShell extends StatefulWidget {
     required this.metrics,
     required this.blinkPhase,
     required this.terminalFocused,
-    required this.statusText,
+    required this.subtitle,
     required this.busy,
     required this.nlController,
     required this.nlFocus,
-    required this.onRestart,
     required this.onTerminalLayout,
     this.title = 'agentos',
   });
@@ -41,11 +40,10 @@ class NotebookShell extends StatefulWidget {
   final VtMetrics metrics;
   final bool blinkPhase;
   final bool terminalFocused;
-  final String statusText;
+  final String? subtitle;
   final bool busy;
   final TextEditingController nlController;
   final FocusNode nlFocus;
-  final VoidCallback onRestart;
   final void Function(int cols, int rows, EdgeInsets padding) onTerminalLayout;
   final String title;
 
@@ -67,92 +65,31 @@ class _NotebookShellState extends State<NotebookShell> {
   void didUpdateWidget(covariant NotebookShell oldWidget) {
     super.didUpdateWidget(oldWidget);
     final rev = widget.notebook.timelineRevision;
-    if (rev != _seenRev && widget.notebook.timeline.isNotEmpty) {
+    if (rev != _seenRev && widget.notebook.hasTimeline) {
       _seenRev = rev;
+      // reverse:true list — jump to "0" (visual bottom / newest).
       SchedulerBinding.instance.addPostFrameCallback((_) {
         if (!_scroll.hasClients) return;
-        _scroll.animateTo(
-          _scroll.position.maxScrollExtent,
-          duration: const Duration(milliseconds: 160),
-          curve: Curves.easeOut,
-        );
+        _scroll.jumpTo(0);
       });
     }
   }
 
-  Widget _live({required bool focused}) {
-    return LiveTerminalView(
+  Widget _active({
+    required bool showChrome,
+    required bool shellReady,
+  }) {
+    return ActiveInputSurface(
+      mode: widget.notebook.mode,
       session: widget.session,
       metrics: widget.metrics,
       blinkPhase: widget.blinkPhase,
-      focused: focused,
-      onLayout: widget.onTerminalLayout,
-    );
-  }
-
-  String? get _gridMeta {
-    final c = widget.session.frame.cols;
-    final r = widget.session.frame.rows;
-    if (c <= 0 || r <= 0) return null;
-    return '${c}×$r';
-  }
-
-  /// Terminal cell filling max constraints (use under Expanded or as full body).
-  Widget _terminalCell({
-    required bool focused,
-    String? meta,
-  }) {
-    return NotebookCellFrame(
-      kindLabel: 'terminal',
-      metaRight: meta ?? _gridMeta,
-      active: focused,
-      fontFamily: widget.metrics.fontFamily,
-      child: _live(focused: focused),
-    );
-  }
-
-  Widget _askStack() {
-    final fam = widget.metrics.fontFamily;
-    return Column(
-      crossAxisAlignment: CrossAxisAlignment.stretch,
-      children: [
-        Expanded(
-          flex: 3,
-          child: _terminalCell(focused: false, meta: 'live'),
-        ),
-        Expanded(
-          flex: 2,
-          child: NotebookCellFrame(
-            kindLabel: 'ask',
-            active: true,
-            fontFamily: fam,
-            child: NlComposer(
-              controller: widget.nlController,
-              focusNode: widget.nlFocus,
-              fontFamily: fam,
-            ),
-          ),
-        ),
-      ],
-    );
-  }
-
-  Widget _timeline() {
-    final items = widget.notebook.timeline;
-    final fam = widget.metrics.fontFamily;
-    return ListView.builder(
-      controller: _scroll,
-      padding: EdgeInsets.zero,
-      itemCount: items.length,
-      itemBuilder: (context, i) {
-        final e = items[i];
-        return switch (e) {
-          UserMessageEntry(:final message) => UserMessageCell(
-              message: message,
-              fontFamily: fam,
-            ),
-        };
-      },
+      terminalFocused: widget.terminalFocused,
+      nlController: widget.nlController,
+      nlFocus: widget.nlFocus,
+      onTerminalLayout: widget.onTerminalLayout,
+      showChrome: showChrome,
+      shellReady: shellReady,
     );
   }
 
@@ -160,8 +97,10 @@ class _NotebookShellState extends State<NotebookShell> {
   Widget build(BuildContext context) {
     final notebook = widget.notebook;
     final mode = notebook.mode;
-    final empty = notebook.timeline.isEmpty;
+    final empty = !notebook.hasTimeline;
     final fam = widget.metrics.fontFamily;
+    final shellReady = widget.session.shellReady;
+    final isTerm = mode == InputMode.terminal;
 
     return ColoredBox(
       color: VtTheme.background,
@@ -170,11 +109,9 @@ class _NotebookShellState extends State<NotebookShell> {
         children: [
           NotebookTopBar(
             title: widget.title,
-            status: widget.statusText,
+            subtitle: widget.subtitle,
             busy: widget.busy,
             bell: widget.session.bellFlash,
-            modeLabel: notebook.modeChipLabel(),
-            onRestart: widget.busy ? null : widget.onRestart,
             fontFamily: fam,
           ),
           Expanded(
@@ -182,40 +119,60 @@ class _NotebookShellState extends State<NotebookShell> {
               builder: (context, constraints) {
                 final bodyH = constraints.maxHeight;
 
-                // Cold start, terminal: fill the body (bounded by Expanded parent).
-                if (empty && mode == InputMode.terminal) {
-                  return _terminalCell(focused: widget.terminalFocused);
+                // ── Cold start, terminal: full-bleed, no cell chrome ──
+                if (empty && isTerm) {
+                  return _active(showChrome: false, shellReady: shellReady);
                 }
 
-                // Ask, empty timeline: flex stack (terminal + ask).
-                if (empty && mode == InputMode.naturalLanguage) {
-                  return _askStack();
+                // ── Cold start, ask: air above, composer bottom ──
+                if (empty && !isTerm) {
+                  final h = ExpandCap.clampHeight(
+                    desired: bodyH * 0.35,
+                    viewportHeight: bodyH,
+                    minHeight: 140,
+                    maxFraction: 0.5,
+                  );
+                  return Column(
+                    crossAxisAlignment: CrossAxisAlignment.stretch,
+                    children: [
+                      const Expanded(child: SizedBox.expand()),
+                      SizedBox(
+                        height: h,
+                        child: _active(
+                          showChrome: true,
+                          shellReady: shellReady,
+                        ),
+                      ),
+                    ],
+                  );
                 }
 
-                // Timeline + bottom-capped active.
+                // ── Timeline + bottom active (touching; void only above) ──
+                final activeDesired = isTerm ? bodyH * 0.42 : bodyH * 0.32;
                 final activeH = ExpandCap.clampHeight(
-                  desired: bodyH * 0.5,
+                  desired: activeDesired,
                   viewportHeight: bodyH,
-                  minHeight: 160,
-                  maxFraction: 0.55,
+                  minHeight: isTerm ? 180 : 120,
+                  maxFraction: isTerm ? 0.55 : 0.45,
                 );
 
                 return Column(
                   crossAxisAlignment: CrossAxisAlignment.stretch,
                   children: [
-                    Expanded(child: _timeline()),
-                    if (mode == InputMode.terminal)
-                      SizedBox(
-                        height: activeH,
-                        child: _terminalCell(
-                          focused: widget.terminalFocused,
-                        ),
-                      )
-                    else
-                      SizedBox(
-                        height: activeH,
-                        child: _askStack(),
+                    Expanded(
+                      child: TimelinePane(
+                        entries: notebook.timeline,
+                        scrollController: _scroll,
+                        fontFamily: fam,
                       ),
+                    ),
+                    SizedBox(
+                      height: activeH,
+                      child: _active(
+                        showChrome: true,
+                        shellReady: shellReady,
+                      ),
+                    ),
                   ],
                 );
               },

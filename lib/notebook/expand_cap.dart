@@ -1,10 +1,10 @@
-/// Expand for readability, then hard-cap (docs/ui-northstar.md).
+/// Expand for readability, then hard-cap (docs/ui-northstar.md §4.9).
 abstract final class ExpandCap {
   static double clampHeight({
     required double desired,
     required double viewportHeight,
     double minHeight = 120,
-    double maxFraction = 0.55,
+    double maxFraction = 0.5,
     double absoluteMax = double.infinity,
   }) {
     if (viewportHeight <= 0) return minHeight;

@@ -3,7 +3,7 @@ import 'package:flutter/material.dart';
 import '../../vt/theme.dart';
 import '../chrome.dart';
 
-/// Ask composer body. Parent [NotebookCellFrame] owns the header.
+/// Ask composer body (mode chip lives on [ActiveInputSurface]).
 class NlComposer extends StatelessWidget {
   const NlComposer({
     super.key,
@@ -31,7 +31,7 @@ class NlComposer extends StatelessWidget {
         cursorColor: VtTheme.chromeAccent,
         decoration: InputDecoration(
           isDense: true,
-          hintText: 'Describe what you want done on this machine…',
+          hintText: 'What should this machine do…',
           hintStyle: NotebookChrome.dim(fam, size: 13),
           border: InputBorder.none,
           contentPadding: const EdgeInsets.fromLTRB(12, 10, 12, 10),

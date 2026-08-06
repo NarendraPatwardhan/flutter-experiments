@@ -13,6 +13,7 @@ class NotebookController extends ChangeNotifier {
   InputMode get mode => _state.mode;
   bool get paletteOpen => _state.paletteOpen;
   List<TimelineEntry> get timeline => _state.timeline;
+  bool get hasTimeline => _state.timeline.isNotEmpty;
   int get timelineRevision => _state.timelineRevision;
   String? get statusFlash => _state.statusFlash;
 
@@ -36,7 +37,7 @@ class NotebookController extends ChangeNotifier {
     notifyListeners();
   }
 
-  /// Append a user message and return to terminal mode.
+  /// Append user message + agent stub. Stays in ask mode (Grok-like).
   bool submitUserMessage(String text) {
     final t = text.trim();
     if (t.isEmpty) {
@@ -45,12 +46,18 @@ class NotebookController extends ChangeNotifier {
     }
     _seq += 1;
     final msg = UserMessage(id: 'msg-$_seq', text: t);
+    _seq += 1;
+    final turn = AgentTurn(
+      id: 'agent-$_seq',
+      summary: 'Agent not connected yet — message recorded on this machine.',
+    );
     final next = List<TimelineEntry>.of(_state.timeline)
-      ..add(UserMessageEntry(msg));
+      ..add(UserMessageEntry(msg))
+      ..add(AgentTurnEntry(turn));
     _state = _state.copyWith(
       timeline: next,
       timelineRevision: _state.timelineRevision + 1,
-      mode: InputMode.terminal,
+      mode: InputMode.naturalLanguage,
       clearStatusFlash: true,
     );
     notifyListeners();
@@ -89,9 +96,5 @@ class NotebookController extends ChangeNotifier {
           HintItem(keyLabel: 'Esc', action: 'clear / back'),
         ];
     }
-  }
-
-  String? modeChipLabel() {
-    return _state.mode == InputMode.naturalLanguage ? 'ask' : null;
   }
 }

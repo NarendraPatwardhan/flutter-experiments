@@ -200,15 +200,15 @@ class _HomePageState extends State<HomePage> with SingleTickerProviderStateMixin
     try {
       final assets = _locateAssets();
       if (assets == null) {
-        _bootError = 'missing host library or kernel.wasm';
+        _bootError = 'Missing runtime files';
         return;
       }
       if (assets.vtLib == null) {
-        _bootError = 'missing libghostty-vt.so';
+        _bootError = 'Missing terminal engine';
         return;
       }
       if (assets.image == null) {
-        _bootError = 'missing guest image (loom.tar / posix.tar)';
+        _bootError = 'Missing guest image';
         return;
       }
       await _session.start(
@@ -222,7 +222,7 @@ class _HomePageState extends State<HomePage> with SingleTickerProviderStateMixin
         cellH: _metrics.cellHeight.round(),
       );
     } catch (e) {
-      _bootError ??= 'start failed: $e';
+      _bootError ??= 'Could not start';
     } finally {
       _starting = false;
       if (mounted) setState(() {});
@@ -253,16 +253,14 @@ class _HomePageState extends State<HomePage> with SingleTickerProviderStateMixin
     unawaited(_resizeSession());
   }
 
-  String get _statusText {
-    if (_bootError != null && !_session.started) return _bootError!;
-    if (!_session.started && !_session.busy) {
-      final a = _locateAssets();
-      if (a == null) return 'missing host library or kernel';
-      if (a.vtLib == null) return 'missing libghostty-vt.so';
-      if (a.image == null) return 'missing guest image';
-      return 'starting…';
-    }
-    return _session.statusLine;
+  /// Quiet top-bar secondary: errors, Starting, optional pwd. Never metrics.
+  String? get _subtitle {
+    if (_bootError != null && !_session.started) return _bootError;
+    if (!_session.started) return 'Starting…';
+    if (!_session.shellReady) return 'Starting…';
+    final s = _session.statusLine.trim();
+    if (s.isEmpty) return null;
+    return s;
   }
 
   KeyEventResult _onKey(FocusNode node, KeyEvent event) {
@@ -326,7 +324,10 @@ class _HomePageState extends State<HomePage> with SingleTickerProviderStateMixin
   void _submitNl() {
     if (!_notebook.submitUserMessage(_nlText.text)) return;
     _nlText.clear();
-    _enterTerminal();
+    // Stay in ask mode (Grok-like). Focus stays on composer.
+    SchedulerBinding.instance.addPostFrameCallback((_) {
+      if (mounted) _nlFocus.requestFocus();
+    });
   }
 
   Future<void> _openControlPlane() async {
@@ -369,7 +370,7 @@ class _HomePageState extends State<HomePage> with SingleTickerProviderStateMixin
 
   @override
   Widget build(BuildContext context) {
-    final busy = _session.busy || _starting;
+    final busy = _session.busy || _starting || !_session.shellReady;
     return Focus(
       focusNode: _shellFocus,
       autofocus: true,
@@ -387,12 +388,11 @@ class _HomePageState extends State<HomePage> with SingleTickerProviderStateMixin
               blinkPhase: _blink.value >= 0.5,
               terminalFocused:
                   _terminalFocused && _notebook.mode == InputMode.terminal,
-              statusText: _statusText,
-              busy: busy,
+              subtitle: _subtitle,
+              busy: busy && _bootError == null,
               title: 'agentos',
               nlController: _nlText,
               nlFocus: _nlFocus,
-              onRestart: () => unawaited(_startSession()),
               onTerminalLayout: _onTerminalLayout,
             );
           },

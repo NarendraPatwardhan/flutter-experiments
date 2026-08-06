@@ -3,24 +3,22 @@ import 'package:flutter/material.dart';
 import '../../vt/theme.dart';
 import '../chrome.dart';
 
+/// Thin fixed identity bar. No metrics, no restart, no mode chip.
 class NotebookTopBar extends StatelessWidget {
   const NotebookTopBar({
     super.key,
     required this.title,
-    required this.status,
+    this.subtitle,
     this.busy = false,
     this.bell = false,
-    this.modeLabel,
-    this.onRestart,
     this.fontFamily,
   });
 
   final String title;
-  final String status;
+  /// Quiet secondary (pwd, short error). Never grid size or tick state.
+  final String? subtitle;
   final bool busy;
   final bool bell;
-  final String? modeLabel;
-  final VoidCallback? onRestart;
   final String? fontFamily;
 
   static const double height = 28;
@@ -29,9 +27,10 @@ class NotebookTopBar extends StatelessWidget {
   Widget build(BuildContext context) {
     final accent = bell ? VtTheme.chromeBell : VtTheme.chromeAccent;
     final fam = fontFamily;
+    final sub = subtitle?.trim();
     return Container(
       height: height,
-      padding: const EdgeInsets.symmetric(horizontal: 10),
+      padding: const EdgeInsets.symmetric(horizontal: 12),
       decoration: BoxDecoration(
         color: VtTheme.chromeBg,
         border: Border(
@@ -51,19 +50,18 @@ class NotebookTopBar extends StatelessWidget {
               weight: FontWeight.w600,
             ),
           ),
-          if (modeLabel != null) ...[
-            const SizedBox(width: 8),
-            NotebookChrome.modeChip(modeLabel!, fam, emphasize: true),
-          ],
-          const SizedBox(width: 10),
-          Expanded(
-            child: Text(
-              status,
-              maxLines: 1,
-              overflow: TextOverflow.ellipsis,
-              style: NotebookChrome.mono(fam, size: 12),
+          if (sub != null && sub.isNotEmpty) ...[
+            const SizedBox(width: 10),
+            Expanded(
+              child: Text(
+                sub,
+                maxLines: 1,
+                overflow: TextOverflow.ellipsis,
+                style: NotebookChrome.dim(fam, size: 12),
+              ),
             ),
-          ),
+          ] else
+            const Spacer(),
           if (busy)
             const SizedBox(
               width: 12,
@@ -71,21 +69,6 @@ class NotebookTopBar extends StatelessWidget {
               child: CircularProgressIndicator(
                 strokeWidth: 1.5,
                 color: VtTheme.chromeDim,
-              ),
-            )
-          else if (onRestart != null)
-            Tooltip(
-              message: 'Restart session',
-              waitDuration: const Duration(milliseconds: 400),
-              child: TextButton(
-                onPressed: onRestart,
-                style: TextButton.styleFrom(
-                  foregroundColor: VtTheme.chromeDim,
-                  padding: const EdgeInsets.symmetric(horizontal: 8),
-                  minimumSize: const Size(0, 24),
-                  tapTargetSize: MaterialTapTargetSize.shrinkWrap,
-                ),
-                child: Text('restart', style: NotebookChrome.dim(fam, size: 12)),
               ),
             ),
         ],

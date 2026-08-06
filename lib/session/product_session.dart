@@ -49,12 +49,14 @@ class ProductSession extends ChangeNotifier {
   int _padT = 8;
 
   VtFrame _frame = VtFrame.empty();
-  String _statusLine = 'idle';
+  String _statusLine = '';
   bool _busy = false;
   bool _bellFlash = false;
   Timer? _bellTimer;
   String? _lastError;
   bool _atPrompt = false;
+  bool _shellReady = false;
+  int _readyTicks = 0;
   AgentOsTickState? _lastTick;
   String _title = '';
   String _pwd = '';
@@ -69,11 +71,15 @@ class ProductSession extends ChangeNotifier {
   final BytesBuilder _pendingInput = BytesBuilder(copy: false);
 
   VtFrame get frame => _frame;
+  /// Quiet host status for chrome (errors / short lifecycle only — no metrics).
   String get statusLine => _statusLine;
   bool get busy => _busy;
   bool get bellFlash => _bellFlash;
   bool get started => _started;
   bool get closed => _closed;
+  /// Guest shell is interactive; hide boot dump until this is true.
+  bool get shellReady => _shellReady;
+  bool get atPrompt => _atPrompt;
   VtTerminal? get vt => _vt;
   AgentOsVm? get vm => _vm;
 
@@ -111,7 +117,10 @@ class ProductSession extends ChangeNotifier {
     _closed = false;
     _nativeReleased = false;
     _busy = true;
-    _statusLine = 'opening vt…';
+    _shellReady = false;
+    _readyTicks = 0;
+    _atPrompt = false;
+    _statusLine = 'Starting…';
     _frame = VtFrame.empty(cols: cols, rows: rows);
     _lastError = null;
     _title = '';
@@ -132,16 +141,10 @@ class ProductSession extends ChangeNotifier {
       _cellH = cellH;
       _selection = VtSelectionController.open(vt.native);
 
-      // Banner is VT-only (not AgentOS exec); proves style path immediately.
-      vt.writeText(
-        '\x1b[1;32magentos\x1b[0m · flutter · live session\r\n'
-        '\x1b[90mgrid ${vt.cols}×${vt.rows}  '
-        'cell ${cellW}×$cellH\x1b[0m\r\n',
-      );
-      _compress.onWrite(vt.native, vt.handle);
+      // No host banner / grid metrics — end users never need that.
       _frame = vt.snapshot(previous: _frame);
       await _syncImages(vt);
-      _statusLine = 'booting agentos…';
+      _statusLine = 'Starting…';
       notifyListeners();
 
       final vm = await AgentOsVm.bootFromFiles(
@@ -152,7 +155,7 @@ class ProductSession extends ChangeNotifier {
       _vm = vm;
       _started = true;
       _busy = false;
-      _statusLine = 'live  ${vt.cols}×${vt.rows}';
+      _statusLine = '';
       _frame = vt.snapshot(previous: _frame);
       await _syncImages(vt);
       notifyListeners();
@@ -210,12 +213,30 @@ class ProductSession extends ChangeNotifier {
         _loop = null;
       }
 
+      // Status before output so we know whether this tick is past boot.
+      try {
+        final st = await vm.status();
+        if (_closed) return;
+        _atPrompt = st.atPrompt;
+        if (_lastError != null && _lastError!.startsWith('status:')) {
+          _lastError = null;
+        }
+      } catch (e) {
+        if (!_closed) _lastError = 'status: $e';
+      }
+      if (_closed) return;
+
+      _maybeMarkShellReady();
+
       try {
         final out = await vm.takeOutput(capacity: 128 * 1024);
         if (_closed) return;
         if (out.isNotEmpty) {
-          vt.writeGuest(out);
-          _compress.onWrite(vt.native, vt.handle);
+          // Drop guest boot spam until interactive so first paint is clean.
+          if (_shellReady) {
+            vt.writeGuest(out);
+            _compress.onWrite(vt.native, vt.handle);
+          }
         }
         if (_lastError != null && _lastError!.startsWith('take_output:')) {
           _lastError = null;
@@ -279,18 +300,6 @@ class ProductSession extends ChangeNotifier {
         _title = vt.title;
         _pwd = vt.pwd;
       }
-
-      try {
-        final st = await vm.status();
-        if (_closed) return;
-        _atPrompt = st.atPrompt;
-        if (_lastError != null && _lastError!.startsWith('status:')) {
-          _lastError = null;
-        }
-      } catch (e) {
-        if (!_closed) _lastError = 'status: $e';
-      }
-      if (_closed) return;
 
       _frame = vt.snapshot(previous: _frame);
       await _syncImages(vt);
@@ -362,35 +371,29 @@ class ProductSession extends ChangeNotifier {
     }
   }
 
+  /// Quiet chrome string: errors, exit, optional pwd. Never grid or tick soup.
   String _composeStatus(VtTerminal vt) {
-    if (_lastError != null) return 'error: $_lastError';
-    // Do not echo product name here — the top bar already shows title/windowTitle.
-    final parts = <String>[];
-    if (_title.isNotEmpty && _title.toLowerCase() != 'agentos') {
-      parts.add(_title);
-    }
+    if (_lastError != null) return _lastError!;
+    if (_lastTick == AgentOsTickState.exited) return 'Session ended';
     if (_pwd.isNotEmpty) {
       var p = _pwd;
       if (p.startsWith('file://')) {
         final idx = p.indexOf('/', 7);
         p = idx >= 0 ? p.substring(idx) : p;
       }
-      parts.add(p);
+      if (p.isNotEmpty && p != '/') return p;
     }
-    parts.add('${vt.cols}×${vt.rows}');
-    if (_atPrompt) parts.add('prompt');
-    if (_lastTick == AgentOsTickState.exited) parts.add('exited');
-    if (_lastTick == AgentOsTickState.waiting) parts.add('wait');
-    final prog = _progress;
-    if (prog != null) {
-      final s = _formatProgress(prog);
-      if (s.isNotEmpty) parts.add(s);
+    return '';
+  }
+
+  void _maybeMarkShellReady() {
+    if (_shellReady) return;
+    _readyTicks += 1;
+    // Prefer AgentOS "at prompt"; fall back after ~1.5s of live ticks so the
+    // user is never stuck on Starting… if the flag never fires.
+    if (_atPrompt || _readyTicks >= 75) {
+      _shellReady = true;
     }
-    if (_lastNotification != null && _lastNotification!.isNotEmpty) {
-      parts.add('notify: $_lastNotification');
-    }
-    if (parts.isEmpty) return 'live';
-    return parts.join(' · ');
   }
 
   String _formatProgress(VtChromeProgress p) {
@@ -638,6 +641,9 @@ class ProductSession extends ChangeNotifier {
     _pendingInput.clear();
     _started = false;
     _busy = false;
+    _shellReady = false;
+    _readyTicks = 0;
+    _atPrompt = false;
 
     await _waitForTickIdle();
     final tears = _releaseNative();
@@ -648,7 +654,7 @@ class ProductSession extends ChangeNotifier {
       _lastError = 'dispose: ${tears.join('; ')}';
     }
     if (notify) {
-      _statusLine = tears.isEmpty ? 'stopped' : 'error: $_lastError';
+      _statusLine = tears.isEmpty ? '' : 'Session error';
       // ChangeNotifier may already be disposed on widget teardown — guard.
       try {
         notifyListeners();

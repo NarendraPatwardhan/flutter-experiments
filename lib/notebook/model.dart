@@ -9,7 +9,7 @@ enum InputMode {
   naturalLanguage,
 }
 
-/// User message recorded in the timeline.
+/// User message on the timeline.
 class UserMessage {
   UserMessage({
     required this.id,
@@ -19,6 +19,19 @@ class UserMessage {
 
   final String id;
   final String text;
+  final DateTime at;
+}
+
+/// Agent turn stub / blocks on the timeline (H1: stub text only).
+class AgentTurn {
+  AgentTurn({
+    required this.id,
+    required this.summary,
+    DateTime? at,
+  }) : at = at ?? DateTime.now();
+
+  final String id;
+  final String summary;
   final DateTime at;
 }
 
@@ -33,6 +46,13 @@ class UserMessageEntry extends TimelineEntry {
   final UserMessage message;
   @override
   String get id => message.id;
+}
+
+class AgentTurnEntry extends TimelineEntry {
+  const AgentTurnEntry(this.turn);
+  final AgentTurn turn;
+  @override
+  String get id => turn.id;
 }
 
 /// Bottom-bar hint row.
