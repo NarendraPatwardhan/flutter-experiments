@@ -5,9 +5,7 @@ import '../../vt/painter.dart';
 import '../document.dart';
 import 'cell_chrome.dart';
 
-/// Frozen terminal history cell — docs/notebook-components.md §4.6.
-///
-/// Always overflow-safe: hard-cap body + **internal** scroll when needed.
+/// Frozen terminal — hard-cap + **guaranteed** internal scroll when tall.
 class FrozenTerminalSurface extends StatelessWidget {
   const FrozenTerminalSurface({
     super.key,
@@ -18,8 +16,8 @@ class FrozenTerminalSurface extends StatelessWidget {
   final TerminalFreezeCell cell;
   final VtMetrics metrics;
 
-  /// Paint cap (~10 rows). Longer freezes scroll inside the cell.
-  static const double maxBodyPx = 180;
+  /// ~8 mono rows before scroll (forces in-cell scroll for long freezes).
+  static const double maxBodyPx = 140;
   static const EdgeInsets pad = EdgeInsets.fromLTRB(8, 4, 8, 4);
 
   @override
@@ -32,40 +30,53 @@ class FrozenTerminalSurface extends StatelessWidget {
         contentH.clamp(metrics.cellHeight + pad.vertical, maxBodyPx);
     final needsScroll = contentH > bodyH + 0.5;
 
-    final paint = CustomPaint(
-      size: Size(double.infinity, contentH),
-      painter: VtPainter(
-        frame: frame,
-        metrics: metrics,
-        padding: pad,
-        focused: false,
-        blinkPhase: false,
-      ),
-    );
-
-    final body = SizedBox(
-      height: bodyH,
-      width: double.infinity,
-      child: ClipRect(
-        child: needsScroll
-            ? SingleChildScrollView(
-                primary: false,
-                physics: const ClampingScrollPhysics(),
-                child: paint,
-              )
-            : paint,
-      ),
-    );
-
     return Padding(
       padding: const EdgeInsets.only(bottom: 8),
       child: CellChrome(
         kindLabel: 'terminal',
-        active: false,
-        expandBody: false,
         metaRight: CellChrome.formatTime(cell.at),
         fontFamily: fam,
-        child: body,
+        child: LayoutBuilder(
+          builder: (context, constraints) {
+            final w = constraints.maxWidth;
+            // Explicit size so CustomPaint participates in scroll extent.
+            final paint = SizedBox(
+              width: w,
+              height: contentH,
+              child: CustomPaint(
+                size: Size(w, contentH),
+                painter: VtPainter(
+                  frame: frame,
+                  metrics: metrics,
+                  padding: pad,
+                  focused: false,
+                  blinkPhase: false,
+                ),
+              ),
+            );
+
+            return SizedBox(
+              height: bodyH,
+              width: w,
+              child: ClipRect(
+                child: needsScroll
+                    ? ScrollConfiguration(
+                        behavior: ScrollConfiguration.of(context).copyWith(
+                          scrollbars: true,
+                        ),
+                        child: SingleChildScrollView(
+                          primary: false,
+                          physics: const AlwaysScrollableScrollPhysics(
+                            parent: ClampingScrollPhysics(),
+                          ),
+                          child: paint,
+                        ),
+                      )
+                    : paint,
+              ),
+            );
+          },
+        ),
       ),
     );
   }

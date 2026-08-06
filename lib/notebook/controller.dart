@@ -35,7 +35,8 @@ class NotebookController extends ChangeNotifier {
     if (_doc.mode == InputMode.naturalLanguage) return false;
     final next = List<NotebookCell>.of(_doc.timeline);
     var froze = false;
-    if (liveFrame != null && FreezePolicy.hasInk(liveFrame)) {
+    // Only freeze real work — bare reattached `$ ` is not a history cell.
+    if (liveFrame != null && FreezePolicy.isWorthFreezing(liveFrame)) {
       _seq += 1;
       next.add(
         TerminalFreezeCell(

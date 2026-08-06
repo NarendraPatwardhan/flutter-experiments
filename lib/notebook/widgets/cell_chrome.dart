@@ -3,31 +3,29 @@ import 'package:flutter/material.dart';
 import '../../vt/metrics.dart';
 import '../../vt/theme.dart';
 
-/// Universal cell outline — docs/notebook-components.md §4.1.
+/// History cell chrome — Grok-style role distinction without boxed chips.
 ///
-/// GrokNight paper-thin borders: history slightly clearer; active melts into
-/// canvas with a quieter focused stroke (no neon green box).
+/// Left semantic accent bar + plain label (bullet language of Grok scrollback).
+/// Paper-thin outer border; content always clipped.
 class CellChrome extends StatelessWidget {
   const CellChrome({
     super.key,
     required this.kindLabel,
     required this.child,
     this.metaRight,
-    this.active = false,
-    this.expandBody = true,
+    this.expandBody = false,
     this.fontFamily,
   });
 
   final String kindLabel;
   final Widget child;
   final String? metaRight;
-  final bool active;
   final bool expandBody;
   final String? fontFamily;
 
-  static const double headerHeight = 24;
+  static const double headerHeight = 22;
 
-  static TextStyle _mono(
+  static TextStyle mono(
     String? fam, {
     double size = 12,
     Color? color,
@@ -44,34 +42,51 @@ class CellChrome extends StatelessWidget {
     );
   }
 
+  static TextStyle dim(String? fam, {double size = 11}) =>
+      mono(fam, size: size, color: VtTheme.chromeDim);
+
+  static TextStyle accent(String? fam, {double size = 12}) => mono(
+        fam,
+        size: size,
+        color: VtTheme.chromeAccent,
+        weight: FontWeight.w600,
+      );
+
+  static String formatTime(DateTime t) {
+    final h = t.hour.toString().padLeft(2, '0');
+    final m = t.minute.toString().padLeft(2, '0');
+    final s = t.second.toString().padLeft(2, '0');
+    return '$h:$m:$s';
+  }
+
   @override
   Widget build(BuildContext context) {
     final fam = fontFamily;
-    final border = active ? VtTheme.chromeBorderActive : VtTheme.chromeBorderHistory;
-    final width = active ? 1.0 : 1.0;
+    final role = VtTheme.roleAccent(kindLabel);
+    final border = VtTheme.chromeBorderHistory;
 
     final header = SizedBox(
       height: headerHeight,
-      child: DecoratedBox(
-        decoration: BoxDecoration(
-          color: active ? VtTheme.background : VtTheme.cellHeaderBg,
-          border: Border(
-            bottom: BorderSide(color: border.withOpacity(0.85), width: 1),
-          ),
-        ),
-        child: Padding(
-          padding: const EdgeInsets.symmetric(horizontal: 10),
-          child: Row(
-            children: [
-              _KindChip(label: kindLabel, active: active, fontFamily: fam),
-              const Spacer(),
-              if (metaRight != null && metaRight!.isNotEmpty)
-                Text(
-                  metaRight!,
-                  style: _mono(fam, size: 10, color: VtTheme.chromeDim),
-                ),
-            ],
-          ),
+      child: Padding(
+        padding: const EdgeInsets.symmetric(horizontal: 10),
+        child: Row(
+          children: [
+            // Grok-like bullet: solid glyph, role color — no square chip.
+            Text(
+              '● ',
+              style: mono(fam, size: 10, color: role, weight: FontWeight.w600),
+            ),
+            Text(
+              kindLabel,
+              style: mono(fam, size: 11, color: role, weight: FontWeight.w500),
+            ),
+            const Spacer(),
+            if (metaRight != null && metaRight!.isNotEmpty)
+              Text(
+                metaRight!,
+                style: mono(fam, size: 10, color: VtTheme.chromeMuted),
+              ),
+          ],
         ),
       ),
     );
@@ -82,77 +97,96 @@ class CellChrome extends StatelessWidget {
 
     return Container(
       decoration: BoxDecoration(
-        color: active ? VtTheme.background : VtTheme.cellHistoryBg,
-        border: Border.all(color: border, width: width),
+        color: VtTheme.cellHistoryBg,
+        borderRadius: BorderRadius.circular(6),
+        border: Border(
+          left: BorderSide(color: role.withOpacity(0.9), width: 3),
+          top: BorderSide(color: border),
+          right: BorderSide(color: border),
+          bottom: BorderSide(color: border),
+        ),
       ),
+      clipBehavior: Clip.antiAlias,
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.stretch,
         mainAxisSize: expandBody ? MainAxisSize.max : MainAxisSize.min,
         children: [
           header,
+          Divider(height: 1, thickness: 1, color: border.withOpacity(0.7)),
           body,
         ],
       ),
     );
   }
-
-  static String formatTime(DateTime t) {
-    final h = t.hour.toString().padLeft(2, '0');
-    final m = t.minute.toString().padLeft(2, '0');
-    final s = t.second.toString().padLeft(2, '0');
-    return '$h:$m:$s';
-  }
-
-  static TextStyle mono(
-    String? fam, {
-    double size = 12,
-    Color? color,
-    FontWeight weight = FontWeight.w400,
-    double height = 1.0,
-  }) =>
-      _mono(fam, size: size, color: color, weight: weight, height: height);
-
-  static TextStyle dim(String? fam, {double size = 11}) =>
-      _mono(fam, size: size, color: VtTheme.chromeDim);
-
-  static TextStyle accent(String? fam, {double size = 12}) => _mono(
-        fam,
-        size: size,
-        color: VtTheme.chromeAccent,
-        weight: FontWeight.w600,
-      );
 }
 
-class _KindChip extends StatelessWidget {
-  const _KindChip({
-    required this.label,
-    required this.active,
+/// Active bottom composer — rounded, semantic border, mode on bottom edge.
+///
+/// Mirrors Grok prompt chrome: ╭─╮ box, model/mode caption on the bottom rail.
+class ActiveComposerChrome extends StatelessWidget {
+  const ActiveComposerChrome({
+    super.key,
+    required this.modeKind,
+    required this.child,
+    this.focused = true,
     this.fontFamily,
   });
 
-  final String label;
-  final bool active;
+  /// `terminal` | `ask` (drives semantic border + caption).
+  final String modeKind;
+  final Widget child;
+  final bool focused;
   final String? fontFamily;
+
+  static const double footerHeight = 22;
+  static const double radius = 8;
 
   @override
   Widget build(BuildContext context) {
-    // Quiet chip: hairline border, no mint fill.
+    final fam = fontFamily;
+    final border = VtTheme.activeBorder(modeKind, focused: focused);
+    final role = VtTheme.roleAccent(modeKind);
+
     return Container(
-      padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 1),
       decoration: BoxDecoration(
-        border: Border.all(
-          color: active ? VtTheme.chromeBorderActive : VtTheme.chromeBorder,
-        ),
-        borderRadius: BorderRadius.circular(2),
+        color: VtTheme.background,
+        borderRadius: BorderRadius.circular(radius),
+        border: Border.all(color: border, width: focused ? 1.25 : 1),
       ),
-      child: Text(
-        label,
-        style: CellChrome.mono(
-          fontFamily,
-          size: 10,
-          color: active ? VtTheme.chromeFg : VtTheme.chromeDim,
-          weight: FontWeight.w500,
-        ),
+      clipBehavior: Clip.antiAlias,
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.stretch,
+        children: [
+          Expanded(child: ClipRect(child: child)),
+          // Bottom rail: mode sits on the border like Grok model caption.
+          SizedBox(
+            height: footerHeight,
+            child: DecoratedBox(
+              decoration: BoxDecoration(
+                border: Border(
+                  top: BorderSide(color: border.withOpacity(0.9)),
+                ),
+              ),
+              child: Padding(
+                padding: const EdgeInsets.symmetric(horizontal: 10),
+                child: Row(
+                  children: [
+                    Text(
+                      modeKind,
+                      style: CellChrome.mono(
+                        fam,
+                        size: 11,
+                        color: role.withOpacity(focused ? 0.9 : 0.55),
+                        weight: FontWeight.w500,
+                      ),
+                    ),
+                    const Spacer(),
+                  ],
+                ),
+              ),
+            ),
+          ),
+        ],
       ),
     );
   }

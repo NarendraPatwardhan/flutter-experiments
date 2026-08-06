@@ -8,9 +8,7 @@ import 'ask_surface.dart';
 import 'cell_chrome.dart';
 import 'live_terminal_surface.dart';
 
-/// Bottom active slot — docs/notebook-components.md §4.3.
-///
-/// Same rest geometry for terminal and ask; mode only swaps the body surface.
+/// Bottom active slot — rounded composer, semantic border, mode on bottom rail.
 class ActiveSlot extends StatelessWidget {
   const ActiveSlot({
     super.key,
@@ -41,6 +39,8 @@ class ActiveSlot extends StatelessWidget {
   Widget build(BuildContext context) {
     final fam = metrics.fontFamily;
     final isAsk = mode == InputMode.naturalLanguage;
+    final modeKind = isAsk ? 'ask' : 'terminal';
+    final focused = isAsk || terminalFocused;
 
     final body = isAsk
         ? AskSurface(
@@ -67,10 +67,9 @@ class ActiveSlot extends StatelessWidget {
                   ),
           );
 
-    return CellChrome(
-      kindLabel: isAsk ? 'ask' : 'terminal',
-      active: true,
-      expandBody: true,
+    return ActiveComposerChrome(
+      modeKind: modeKind,
+      focused: focused,
       fontFamily: fam,
       child: ColoredBox(color: VtTheme.background, child: body),
     );

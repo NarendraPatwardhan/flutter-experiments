@@ -4,7 +4,6 @@ import '../vt/frame.dart';
 
 /// Pure frame transforms for terminal freezes.
 abstract final class FreezePolicy {
-  /// True if any printable glyph exists.
   static bool hasInk(VtFrame frame) {
     for (final c in frame.cells) {
       if (c.text.isNotEmpty) return true;
@@ -23,7 +22,7 @@ abstract final class FreezePolicy {
     return buf.toString().replaceAll(RegExp(r'\s+$'), '');
   }
 
-  /// Bare shell prompt waiting for input (`$`, `#`, …) — not `$ pwd`.
+  /// Bare shell prompt only (`$`, `#`, …) — not `$ pwd`.
   static bool rowIsBarePrompt(VtFrame frame, int y) {
     final t = rowText(frame, y).trim();
     if (t.isEmpty) return true;
@@ -46,13 +45,29 @@ abstract final class FreezePolicy {
     return last < 0 ? 0 : last + 1;
   }
 
-  /// Drop trailing bare-prompt lines so freezes do not end on a lonely `$`.
   static int usedRowsForFreeze(VtFrame frame) {
     var used = usedRows(frame);
     while (used > 1 && rowIsBarePrompt(frame, used - 1)) {
       used -= 1;
     }
     return used <= 0 ? usedRows(frame) : used;
+  }
+
+  /// True only if freeze would keep **real** work (not display-only `$ `).
+  ///
+  /// Fixes empty history cells from Shift+Tab after prompt reattach.
+  static bool isWorthFreezing(VtFrame frame) {
+    if (!hasInk(frame)) return false;
+    final used = usedRowsForFreeze(frame);
+    if (used <= 0) return false;
+    for (var y = 0; y < used; y++) {
+      final t = rowText(frame, y).trim();
+      if (t.isEmpty) continue;
+      if (rowIsBarePrompt(frame, y)) continue;
+      return true;
+    }
+    // Only bare prompts / blanks (e.g. reattached `$ `).
+    return false;
   }
 
   /// Immutable freeze: no cursor, no trailing bare `$`, cropped to content.

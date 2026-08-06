@@ -82,19 +82,24 @@ class _TextHistoryCell extends StatelessWidget {
       padding: const EdgeInsets.only(bottom: 8),
       child: CellChrome(
         kindLabel: kind,
-        active: false,
-        expandBody: false,
         metaRight: CellChrome.formatTime(at),
         fontFamily: fontFamily,
-        child: Padding(
-          padding: const EdgeInsets.fromLTRB(12, 10, 12, 12),
-          child: SelectableText(
-            text,
-            style: CellChrome.mono(
-              fontFamily,
-              size: 13,
-              height: 1.35,
-              color: dimBody ? VtTheme.chromeDim : VtTheme.chromeFg,
+        child: ConstrainedBox(
+          constraints: const BoxConstraints(maxHeight: 160),
+          child: SingleChildScrollView(
+            primary: false,
+            physics: const ClampingScrollPhysics(),
+            child: Padding(
+              padding: const EdgeInsets.fromLTRB(12, 10, 12, 12),
+              child: SelectableText(
+                text,
+                style: CellChrome.mono(
+                  fontFamily,
+                  size: 13,
+                  height: 1.35,
+                  color: dimBody ? VtTheme.chromeDim : VtTheme.chromeFg,
+                ),
+              ),
             ),
           ),
         ),

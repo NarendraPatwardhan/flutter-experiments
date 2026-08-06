@@ -9,7 +9,7 @@ import '../document.dart';
 import '../expand_cap.dart';
 import 'active_slot.dart';
 import 'bottom_bar.dart';
-import 'cell_chrome.dart';
+import 'cell_chrome.dart' show ActiveComposerChrome;
 import 'history_column.dart';
 import 'top_bar.dart';
 
@@ -81,7 +81,8 @@ class _NotebookShellState extends State<NotebookShell> {
   /// Shared rest height for terminal **and** ask (no jump on Shift+Tab).
   double _activeHeight(double bodyH) {
     final rowH = widget.metrics.cellHeight;
-    final desired = CellChrome.headerHeight + 10 + rowH * 8;
+    // ActiveComposerChrome footer + pad + ~8 mono rows.
+    final desired = ActiveComposerChrome.footerHeight + 12 + rowH * 8;
     return ExpandCap.clampHeight(
       desired: desired,
       viewportHeight: bodyH,
