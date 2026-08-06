@@ -3,7 +3,7 @@ import 'package:flutter/material.dart';
 import '../../vt/theme.dart';
 import '../chrome.dart';
 
-/// Outlined notebook cell — always a visible box, not a flat strip.
+/// Outlined notebook cell — same box chrome for history and active.
 class NotebookCellFrame extends StatelessWidget {
   const NotebookCellFrame({
     super.key,
@@ -24,22 +24,20 @@ class NotebookCellFrame extends StatelessWidget {
 
   static const double headerHeight = 26;
 
-  /// Visible outline (dark-on-dark needs more than hairline #2A2A2A).
-  static const Color outline = Color(0xFF3D3D3D);
-  static const Color outlineActive = Color(0xFF5A9E72);
+  /// Shared outline for every cell (active uses thicker + left accent).
+  static const Color outline = Color(0xFF4A4A4A);
 
   @override
   Widget build(BuildContext context) {
     final fam = fontFamily;
-    final borderColor = active ? outlineActive : outline;
 
     final header = SizedBox(
       height: headerHeight,
       child: DecoratedBox(
-        decoration: BoxDecoration(
+        decoration: const BoxDecoration(
           color: VtTheme.chromeBg,
           border: Border(
-            bottom: BorderSide(color: outline.withOpacity(0.9)),
+            bottom: BorderSide(color: outline, width: 1),
           ),
         ),
         child: Padding(
@@ -65,22 +63,28 @@ class NotebookCellFrame extends StatelessWidget {
 
     final body = expandBody ? Expanded(child: child) : child;
 
-    return DecoratedBox(
+    // Container (not DecoratedBox+Clip) so the full rectangle border paints
+    // the same way for tall active cells and short history cells.
+    return Container(
       decoration: BoxDecoration(
         color: VtTheme.background,
-        border: Border.all(color: borderColor, width: active ? 1.5 : 1.0),
-        borderRadius: BorderRadius.circular(4),
-      ),
-      child: ClipRRect(
-        borderRadius: BorderRadius.circular(3),
-        child: Column(
-          crossAxisAlignment: CrossAxisAlignment.stretch,
-          mainAxisSize: expandBody ? MainAxisSize.max : MainAxisSize.min,
-          children: [
-            header,
-            body,
-          ],
+        border: Border(
+          top: BorderSide(color: outline, width: active ? 1.5 : 1),
+          right: BorderSide(color: outline, width: active ? 1.5 : 1),
+          bottom: BorderSide(color: outline, width: active ? 1.5 : 1),
+          left: BorderSide(
+            color: active ? VtTheme.chromeAccent : outline,
+            width: active ? 2.5 : 1,
+          ),
         ),
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.stretch,
+        mainAxisSize: expandBody ? MainAxisSize.max : MainAxisSize.min,
+        children: [
+          header,
+          body,
+        ],
       ),
     );
   }

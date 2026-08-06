@@ -395,7 +395,10 @@ class ProductSession extends ChangeNotifier {
     return '';
   }
 
-  /// Drop guest image boot banner lines; keep shell prompt and user work.
+  /// Drop complete guest boot-banner lines only.
+  ///
+  /// Incomplete trailing text is always kept — holding it (old bug) swallowed
+  /// every keystroke echo until Enter, so the terminal looked dead.
   bool _isBootNoiseLine(String line) {
     final t = line.trimLeft();
     if (t.isEmpty) return false;
@@ -403,6 +406,22 @@ class ProductSession extends ChangeNotifier {
     if (t.startsWith('Booting')) return true;
     if (t.startsWith('Loading image')) return true;
     if (t.startsWith('Mounting ')) return true;
+    return false;
+  }
+
+  /// True if [partial] is a long-enough prefix of a known boot banner line.
+  bool _isIncompleteBootPrefix(String partial) {
+    final t = partial.trimLeft();
+    if (t.length < 6) return false;
+    const heads = [
+      'memcontainers',
+      'Booting',
+      'Loading image',
+      'Mounting ',
+    ];
+    for (final h in heads) {
+      if (h.startsWith(t)) return true;
+    }
     return false;
   }
 
@@ -414,17 +433,22 @@ class ProductSession extends ChangeNotifier {
     final out = StringBuffer();
     var start = 0;
     for (var i = 0; i < text.length; i++) {
-      final ch = text.codeUnitAt(i);
-      if (ch != 0x0a /* \n */) continue;
-      final line = text.substring(start, i + 1); // include \n
+      if (text.codeUnitAt(i) != 0x0a /* \n */) continue;
+      final line = text.substring(start, i + 1);
       start = i + 1;
       if (!_isBootNoiseLine(line)) {
         out.write(line);
       }
     }
-    // Incomplete trailing line — hold for next chunk (may be `$ `).
     if (start < text.length) {
-      _bootLineCarry = text.substring(start);
+      final partial = text.substring(start);
+      if (_isIncompleteBootPrefix(partial)) {
+        // Hold only clear boot-banner prefixes across chunks.
+        _bootLineCarry = partial;
+      } else {
+        // Prompts, echoes, user text — paint immediately.
+        out.write(partial);
+      }
     }
     if (out.isEmpty) return Uint8List(0);
     return Uint8List.fromList(utf8.encode(out.toString()));
@@ -432,7 +456,8 @@ class ProductSession extends ChangeNotifier {
 
   void _flushBootCarry(VtTerminal vt) {
     if (_bootLineCarry.isEmpty) return;
-    if (_isBootNoiseLine(_bootLineCarry)) {
+    if (_isBootNoiseLine(_bootLineCarry) ||
+        _isIncompleteBootPrefix(_bootLineCarry)) {
       _bootLineCarry = '';
       return;
     }

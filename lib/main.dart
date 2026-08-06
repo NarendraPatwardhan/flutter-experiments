@@ -225,7 +225,13 @@ class _HomePageState extends State<HomePage> with SingleTickerProviderStateMixin
       _bootError ??= 'Could not start';
     } finally {
       _starting = false;
-      if (mounted) setState(() {});
+      if (mounted) {
+        setState(() {});
+        if (_notebook.mode == InputMode.terminal) {
+          _shellFocus.requestFocus();
+          unawaited(_session.onFocus(true));
+        }
+      }
     }
   }
 
@@ -396,6 +402,12 @@ class _HomePageState extends State<HomePage> with SingleTickerProviderStateMixin
               nlController: _nlText,
               nlFocus: _nlFocus,
               onTerminalLayout: _onTerminalLayout,
+              onRequestTerminalFocus: () {
+                if (_notebook.mode != InputMode.terminal) return;
+                _shellFocus.requestFocus();
+                setState(() => _terminalFocused = true);
+                unawaited(_session.onFocus(true));
+              },
             );
           },
         ),

@@ -10,7 +10,7 @@ import 'live_terminal.dart';
 import 'nl_composer.dart';
 
 /// Bottom-anchored active cell: terminal **or** ask (mode switch, not split).
-/// Always outlined — this is a notebook cell, not a full-bleed PTY.
+/// Same [NotebookCellFrame] outline as history cells.
 class ActiveInputSurface extends StatelessWidget {
   const ActiveInputSurface({
     super.key,
@@ -22,6 +22,7 @@ class ActiveInputSurface extends StatelessWidget {
     required this.nlController,
     required this.nlFocus,
     required this.onTerminalLayout,
+    this.onRequestTerminalFocus,
     this.shellReady = true,
   });
 
@@ -33,6 +34,7 @@ class ActiveInputSurface extends StatelessWidget {
   final TextEditingController nlController;
   final FocusNode nlFocus;
   final void Function(int cols, int rows, EdgeInsets padding) onTerminalLayout;
+  final VoidCallback? onRequestTerminalFocus;
   final bool shellReady;
 
   @override
@@ -46,15 +48,19 @@ class ActiveInputSurface extends StatelessWidget {
             focusNode: nlFocus,
             fontFamily: fam,
           )
-        : shellReady
-            ? LiveTerminalView(
-                session: session,
-                metrics: metrics,
-                blinkPhase: blinkPhase,
-                focused: terminalFocused,
-                onLayout: onTerminalLayout,
-              )
-            : _StartingBody(fontFamily: fam);
+        : GestureDetector(
+            behavior: HitTestBehavior.opaque,
+            onTap: onRequestTerminalFocus,
+            child: shellReady
+                ? LiveTerminalView(
+                    session: session,
+                    metrics: metrics,
+                    blinkPhase: blinkPhase,
+                    focused: terminalFocused,
+                    onLayout: onTerminalLayout,
+                  )
+                : _StartingBody(fontFamily: fam),
+          );
 
     return NotebookCellFrame(
       kindLabel: isAsk ? 'ask' : 'terminal',

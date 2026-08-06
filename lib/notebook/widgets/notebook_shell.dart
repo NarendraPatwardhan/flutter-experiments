@@ -34,6 +34,7 @@ class NotebookShell extends StatefulWidget {
     required this.nlController,
     required this.nlFocus,
     required this.onTerminalLayout,
+    this.onRequestTerminalFocus,
     this.title = 'agentos',
   });
 
@@ -47,6 +48,7 @@ class NotebookShell extends StatefulWidget {
   final TextEditingController nlController;
   final FocusNode nlFocus;
   final void Function(int cols, int rows, EdgeInsets padding) onTerminalLayout;
+  final VoidCallback? onRequestTerminalFocus;
   final String title;
 
   @override
@@ -149,6 +151,7 @@ class _NotebookShellState extends State<NotebookShell> {
                           nlController: widget.nlController,
                           nlFocus: widget.nlFocus,
                           onTerminalLayout: widget.onTerminalLayout,
+                          onRequestTerminalFocus: widget.onRequestTerminalFocus,
                           shellReady: shellReady,
                         ),
                       ),
