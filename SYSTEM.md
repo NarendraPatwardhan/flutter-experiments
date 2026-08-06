@@ -382,6 +382,7 @@ The system is on the correct path when all of these are true:
 | `AGENTS.md` | Short allowed-command table for automated agents. |
 | `README.md` | Build, fetch, and run steps for operators. |
 | `docs/ui-northstar.md` | Machine notebook UI: cells, Ctrl+K, bars, contracts. |
+| `docs/notebook-components.md` | Notebook component system: CellChrome, ActiveSlot, freeze, overflow. |
 | `docs/control-plane-palette.md` | Ctrl+K control plane palette (kinds, modes, scorer). |
 | `docs/agent-spine.md` | Agent loop, multi-agent, continual harness on AgentOS. |
 | `docs/ui-toolkit.md` | Forui hybrid vs invent for host chrome. |
