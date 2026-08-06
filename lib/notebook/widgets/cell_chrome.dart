@@ -3,9 +3,7 @@ import 'package:flutter/material.dart';
 import '../../vt/metrics.dart';
 import '../../vt/theme.dart';
 
-/// History cell — uniform rounded stroke + quiet role text (no square chips).
-///
-/// Left accent is painted *inside* ClipRRect so top corners stay round.
+/// History cell — rounded outline that **stays visible** on the canvas.
 class CellChrome extends StatelessWidget {
   const CellChrome({
     super.key,
@@ -69,7 +67,7 @@ class CellChrome extends StatelessWidget {
     final header = SizedBox(
       height: headerHeight,
       child: Padding(
-        padding: const EdgeInsets.fromLTRB(8, 0, 10, 0),
+        padding: const EdgeInsets.fromLTRB(10, 0, 10, 0),
         child: Row(
           children: [
             Text(
@@ -95,36 +93,29 @@ class CellChrome extends StatelessWidget {
         ? Expanded(child: ClipRect(child: child))
         : ClipRect(child: child);
 
-    // ClipRRect first so ALL corners round; border is uniform 1px.
-    // Accent bar is an *inner* strip (not a thick left BorderSide — that
-    // square-off the top-left/bottom-left radius in Flutter).
-    return ClipRRect(
-      borderRadius: r,
-      child: DecoratedBox(
-        decoration: BoxDecoration(
-          color: VtTheme.cellHistoryBg,
-          borderRadius: r,
-          border: Border.all(color: border, width: 1),
-        ),
-        child: Column(
-          crossAxisAlignment: CrossAxisAlignment.stretch,
-          mainAxisSize: expandBody ? MainAxisSize.max : MainAxisSize.min,
-          children: [
-            header,
-            Divider(
-              height: 1,
-              thickness: 1,
-              color: border.withOpacity(0.65),
-            ),
-            body,
-          ],
-        ),
+    // Container draws the border *and* clips content — do not wrap with
+    // outer ClipRRect (that can eat the stroke and kill corner visibility).
+    return Container(
+      decoration: BoxDecoration(
+        color: VtTheme.cellHistoryBg,
+        borderRadius: r,
+        border: Border.all(color: border, width: 1),
+      ),
+      clipBehavior: Clip.antiAlias,
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.stretch,
+        mainAxisSize: expandBody ? MainAxisSize.max : MainAxisSize.min,
+        children: [
+          header,
+          Divider(height: 1, thickness: 1, color: border),
+          body,
+        ],
       ),
     );
   }
 }
 
-/// Active bottom composer — rounded box, neutral border, mode on bottom rail.
+/// Active bottom composer — rounded box, visible neutral border, mode on rail.
 class ActiveComposerChrome extends StatelessWidget {
   const ActiveComposerChrome({
     super.key,
@@ -148,47 +139,43 @@ class ActiveComposerChrome extends StatelessWidget {
     final border = VtTheme.activeBorder(modeKind, focused: focused);
     final r = BorderRadius.circular(radius);
 
-    return ClipRRect(
-      borderRadius: r,
-      child: DecoratedBox(
-        decoration: BoxDecoration(
-          color: VtTheme.background,
-          borderRadius: r,
-          border: Border.all(color: border, width: focused ? 1.25 : 1),
-        ),
-        child: Column(
-          crossAxisAlignment: CrossAxisAlignment.stretch,
-          children: [
-            Expanded(child: ClipRect(child: child)),
-            SizedBox(
-              height: footerHeight,
-              child: DecoratedBox(
-                decoration: BoxDecoration(
-                  border: Border(
-                    top: BorderSide(color: border.withOpacity(0.85)),
-                  ),
-                ),
-                child: Padding(
-                  padding: const EdgeInsets.symmetric(horizontal: 10),
-                  child: Align(
-                    alignment: Alignment.centerLeft,
-                    child: Text(
-                      modeKind,
-                      style: CellChrome.mono(
-                        fam,
-                        size: 11,
-                        color: focused
-                            ? VtTheme.chromeFg.withOpacity(0.75)
-                            : VtTheme.chromeMuted,
-                        weight: FontWeight.w500,
-                      ),
+    return Container(
+      decoration: BoxDecoration(
+        color: VtTheme.background,
+        borderRadius: r,
+        border: Border.all(color: border, width: focused ? 1.5 : 1.25),
+      ),
+      clipBehavior: Clip.antiAlias,
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.stretch,
+        children: [
+          Expanded(child: ClipRect(child: child)),
+          SizedBox(
+            height: footerHeight,
+            child: DecoratedBox(
+              decoration: BoxDecoration(
+                border: Border(top: BorderSide(color: border)),
+              ),
+              child: Padding(
+                padding: const EdgeInsets.symmetric(horizontal: 10),
+                child: Align(
+                  alignment: Alignment.centerLeft,
+                  child: Text(
+                    modeKind,
+                    style: CellChrome.mono(
+                      fam,
+                      size: 11,
+                      color: focused
+                          ? VtTheme.chromeFg.withOpacity(0.8)
+                          : VtTheme.chromeMuted,
+                      weight: FontWeight.w500,
                     ),
                   ),
                 ),
               ),
             ),
-          ],
-        ),
+          ),
+        ],
       ),
     );
   }
