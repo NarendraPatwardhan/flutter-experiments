@@ -56,6 +56,8 @@ class ProductSession extends ChangeNotifier {
   String? _lastError;
   bool _atPrompt = false;
   bool _shellReady = false;
+  /// Guest reported ready / timeout — still may have boot backlog in the pipe.
+  bool _wantInteractive = false;
   int _readyTicks = 0;
   AgentOsTickState? _lastTick;
   String _title = '';
@@ -118,6 +120,7 @@ class ProductSession extends ChangeNotifier {
     _nativeReleased = false;
     _busy = true;
     _shellReady = false;
+    _wantInteractive = false;
     _readyTicks = 0;
     _atPrompt = false;
     _statusLine = 'Starting…';
@@ -226,18 +229,24 @@ class ProductSession extends ChangeNotifier {
       }
       if (_closed) return;
 
-      _maybeMarkShellReady();
+      _noteInteractiveDesire();
 
       try {
         final out = await vm.takeOutput(capacity: 128 * 1024);
         if (_closed) return;
-        if (out.isNotEmpty) {
-          // Drop guest boot spam until interactive so first paint is clean.
-          if (_shellReady) {
+        // Never paint guest boot diary:
+        // 1) Drop everything until we want interactive (atPrompt / timeout).
+        // 2) Keep dropping until one quiet take_output (boot backlog flushed).
+        // 3) Only then feed the VT — first paint is a clean shell.
+        if (_shellReady) {
+          if (out.isNotEmpty) {
             vt.writeGuest(out);
             _compress.onWrite(vt.native, vt.handle);
           }
+        } else if (_wantInteractive && out.isEmpty) {
+          _shellReady = true;
         }
+        // else: drop bytes (still booting or flushing backlog)
         if (_lastError != null && _lastError!.startsWith('take_output:')) {
           _lastError = null;
         }
@@ -386,13 +395,12 @@ class ProductSession extends ChangeNotifier {
     return '';
   }
 
-  void _maybeMarkShellReady() {
-    if (_shellReady) return;
+  void _noteInteractiveDesire() {
+    if (_shellReady || _wantInteractive) return;
     _readyTicks += 1;
-    // Prefer AgentOS "at prompt"; fall back after ~1.5s of live ticks so the
-    // user is never stuck on Starting… if the flag never fires.
-    if (_atPrompt || _readyTicks >= 75) {
-      _shellReady = true;
+    // Prefer real shell prompt. Fall back after ~3s if the flag never flips.
+    if (_atPrompt || _readyTicks >= 150) {
+      _wantInteractive = true;
     }
   }
 
@@ -642,6 +650,7 @@ class ProductSession extends ChangeNotifier {
     _started = false;
     _busy = false;
     _shellReady = false;
+    _wantInteractive = false;
     _readyTicks = 0;
     _atPrompt = false;
 
