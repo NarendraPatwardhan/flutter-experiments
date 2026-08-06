@@ -3,7 +3,7 @@ import 'package:flutter/material.dart';
 import '../../vt/metrics.dart';
 import '../../vt/theme.dart';
 
-/// History cell — rounded outline that **stays visible** on the canvas.
+/// History cell — rounded outline via [Material] shape (reliable corner arcs).
 class CellChrome extends StatelessWidget {
   const CellChrome({
     super.key,
@@ -93,13 +93,14 @@ class CellChrome extends StatelessWidget {
         ? Expanded(child: ClipRect(child: child))
         : ClipRect(child: child);
 
-    // Container draws the border *and* clips content — do not wrap with
-    // outer ClipRRect (that can eat the stroke and kill corner visibility).
-    return Container(
-      decoration: BoxDecoration(
-        color: VtTheme.cellHistoryBg,
+    // Material + shape: border and clip share the same rounded rect so
+    // top corners are not squared off by child paint.
+    return Material(
+      color: VtTheme.cellHistoryBg,
+      elevation: 0,
+      shape: RoundedRectangleBorder(
         borderRadius: r,
-        border: Border.all(color: border, width: 1),
+        side: BorderSide(color: border, width: 1),
       ),
       clipBehavior: Clip.antiAlias,
       child: Column(
@@ -115,7 +116,7 @@ class CellChrome extends StatelessWidget {
   }
 }
 
-/// Active bottom composer — rounded box, visible neutral border, mode on rail.
+/// Active bottom composer — all four corners rounded; mode on bottom rail.
 class ActiveComposerChrome extends StatelessWidget {
   const ActiveComposerChrome({
     super.key,
@@ -131,31 +132,43 @@ class ActiveComposerChrome extends StatelessWidget {
   final String? fontFamily;
 
   static const double footerHeight = 22;
-  static const double radius = 8;
+  static const double radius = 10;
 
   @override
   Widget build(BuildContext context) {
     final fam = fontFamily;
     final border = VtTheme.activeBorder(modeKind, focused: focused);
     final r = BorderRadius.circular(radius);
+    final side = BorderSide(color: border, width: focused ? 1.5 : 1.25);
 
-    return Container(
-      decoration: BoxDecoration(
-        color: VtTheme.background,
+    return Material(
+      color: VtTheme.background,
+      elevation: 0,
+      shape: RoundedRectangleBorder(
         borderRadius: r,
-        border: Border.all(color: border, width: focused ? 1.5 : 1.25),
+        side: side,
       ),
       clipBehavior: Clip.antiAlias,
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.stretch,
         children: [
-          Expanded(child: ClipRect(child: child)),
-          SizedBox(
-            height: footerHeight,
-            child: DecoratedBox(
-              decoration: BoxDecoration(
-                border: Border(top: BorderSide(color: border)),
+          // Clip content so VT/grid never paints into the corner arcs.
+          Expanded(
+            child: ClipRRect(
+              borderRadius: BorderRadius.only(
+                topLeft: Radius.circular(radius - 1),
+                topRight: Radius.circular(radius - 1),
               ),
+              clipBehavior: Clip.hardEdge,
+              child: child,
+            ),
+          ),
+          DecoratedBox(
+            decoration: BoxDecoration(
+              border: Border(top: BorderSide(color: border, width: 1)),
+            ),
+            child: SizedBox(
+              height: footerHeight,
               child: Padding(
                 padding: const EdgeInsets.symmetric(horizontal: 10),
                 child: Align(
