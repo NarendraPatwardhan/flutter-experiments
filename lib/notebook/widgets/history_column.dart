@@ -6,10 +6,7 @@ import '../document.dart';
 import 'cell_chrome.dart';
 import 'frozen_terminal_surface.dart';
 
-/// Reverse-glued history — docs/notebook-components.md §4.4.
-///
-/// Newest history cell sits on the bottom of this pane (touches ActiveSlot).
-/// Air only above oldest. Page-scrolls when timeline is tall.
+/// Reverse-glued history — notebook-level scroll only (no per-cell scroll).
 class HistoryColumn extends StatelessWidget {
   const HistoryColumn({
     super.key,
@@ -27,13 +24,16 @@ class HistoryColumn extends StatelessWidget {
     if (cells.isEmpty) return const SizedBox.expand();
 
     final fam = metrics.fontFamily;
-    // reverse:true → first child at visual bottom.
     final visual = cells.reversed.toList(growable: false);
 
     return ListView.builder(
       controller: scrollController,
       reverse: true,
       padding: const EdgeInsets.only(top: 8),
+      // Allow scroll even when content is short (trackpad habit).
+      physics: const AlwaysScrollableScrollPhysics(
+        parent: ClampingScrollPhysics(),
+      ),
       itemCount: visual.length,
       itemBuilder: (context, i) {
         final c = visual[i];
@@ -84,22 +84,15 @@ class _TextHistoryCell extends StatelessWidget {
         kindLabel: kind,
         metaRight: CellChrome.formatTime(at),
         fontFamily: fontFamily,
-        child: ConstrainedBox(
-          constraints: const BoxConstraints(maxHeight: 160),
-          child: SingleChildScrollView(
-            primary: false,
-            physics: const ClampingScrollPhysics(),
-            child: Padding(
-              padding: const EdgeInsets.fromLTRB(12, 10, 12, 12),
-              child: SelectableText(
-                text,
-                style: CellChrome.mono(
-                  fontFamily,
-                  size: 13,
-                  height: 1.35,
-                  color: dimBody ? VtTheme.chromeDim : VtTheme.chromeFg,
-                ),
-              ),
+        child: Padding(
+          padding: const EdgeInsets.fromLTRB(12, 10, 12, 12),
+          child: SelectableText(
+            text,
+            style: CellChrome.mono(
+              fontFamily,
+              size: 13,
+              height: 1.35,
+              color: dimBody ? VtTheme.chromeDim : VtTheme.chromeFg,
             ),
           ),
         ),

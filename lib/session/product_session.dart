@@ -669,16 +669,20 @@ class ProductSession extends ChangeNotifier {
     }
   }
 
-  /// Scroll viewport by pixel [dy] (negative = wheel up → history).
-  /// Used for **in-cell** scroll of the live terminal (not notebook page scroll).
+  /// Scroll live VT scrollback by pixel [dy].
+  ///
+  /// Flutter: wheel/trackpad **up** → `dy < 0` (into history).
+  /// Ghostty: negative delta = up into history.
   Future<void> onScroll(double dy) async {
     if (_closed || _vt == null || dy == 0) return;
-    // Trackpad/mouse: dy > 0 is wheel down (toward present); dy < 0 is up (history).
-    final rows = (dy.abs() / widgetCellScrollPx()).ceil().clamp(1, 48);
+    final cell = widgetCellScrollPx();
+    // At least one row per event; scale for trackpad magnitude.
+    final rows = (dy.abs() / cell).ceil().clamp(1, 64);
     final delta = dy < 0 ? -rows : rows;
     try {
       _vt!.scrollViewport(deltaRows: delta);
-      _frame = _vt!.snapshot(previous: _frame);
+      // Full snapshot after scroll — partial dirty can skip paint updates.
+      _frame = _vt!.snapshot();
       await _syncImages(_vt!);
       notifyListeners();
     } catch (e) {
@@ -688,7 +692,8 @@ class ProductSession extends ChangeNotifier {
   }
 
   /// Pixels per scroll row — roughly one mono line.
-  double widgetCellScrollPx() => _cellH > 0 ? _cellH.toDouble() : 14.0;
+  double widgetCellScrollPx() =>
+      _cellH > 4 ? _cellH.toDouble() * 0.85 : 12.0;
 
   Future<void> resize(
     int cols,

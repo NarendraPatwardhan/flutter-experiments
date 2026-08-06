@@ -8,7 +8,7 @@ import 'ask_surface.dart';
 import 'cell_chrome.dart';
 import 'live_terminal_surface.dart';
 
-/// Bottom active slot — rounded composer, semantic border, mode on bottom rail.
+/// Bottom active slot — rounded composer; live terminal owns its wheel scroll.
 class ActiveSlot extends StatelessWidget {
   const ActiveSlot({
     super.key,
@@ -42,30 +42,28 @@ class ActiveSlot extends StatelessWidget {
     final modeKind = isAsk ? 'ask' : 'terminal';
     final focused = isAsk || terminalFocused;
 
+    // No GestureDetector wrapper — it can interfere with pointer-signal scroll.
     final body = isAsk
         ? AskSurface(
             controller: nlController,
             focusNode: nlFocus,
             fontFamily: fam,
           )
-        : GestureDetector(
-            behavior: HitTestBehavior.opaque,
-            onTap: onRequestTerminalFocus,
-            child: shellReady
-                ? LiveTerminalSurface(
-                    session: session,
-                    metrics: metrics,
-                    blinkPhase: blinkPhase,
-                    focused: terminalFocused,
-                    onLayout: onTerminalLayout,
-                  )
-                : Center(
-                    child: Text(
-                      'Starting…',
-                      style: CellChrome.dim(fam, size: 13),
-                    ),
-                  ),
-          );
+        : shellReady
+            ? LiveTerminalSurface(
+                session: session,
+                metrics: metrics,
+                blinkPhase: blinkPhase,
+                focused: terminalFocused,
+                onLayout: onTerminalLayout,
+                onTap: onRequestTerminalFocus,
+              )
+            : Center(
+                child: Text(
+                  'Starting…',
+                  style: CellChrome.dim(fam, size: 13),
+                ),
+              );
 
     return ActiveComposerChrome(
       modeKind: modeKind,
