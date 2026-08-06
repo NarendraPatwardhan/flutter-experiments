@@ -139,6 +139,26 @@ class VtFrame {
     );
   }
 
+  /// Deep copy for notebook freeze: later live frames must not mutate paint.
+  VtFrame clone() {
+    return VtFrame(
+      cols: cols,
+      rows: rows,
+      cells: List<VtCell>.of(cells),
+      background: background,
+      foreground: foreground,
+      cursorColor: cursorColor,
+      cursorX: cursorX,
+      cursorY: cursorY,
+      cursorVisible: cursorVisible,
+      cursorStyle: cursorStyle,
+      cursorBlink: false,
+      cursorOnWideTail: cursorOnWideTail,
+      dirty: VtDirtyKind.full,
+      dirtyRows: dirtyRows == null ? null : Set<int>.of(dirtyRows!),
+    );
+  }
+
   /// Copy with updated cursor / chrome colors while keeping cell buffer.
   ///
   /// Cursor position/color use explicit clear flags because null is meaningful

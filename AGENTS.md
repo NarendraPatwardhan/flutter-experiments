@@ -1,5 +1,7 @@
 # Agent rules — zero local analysis
 
+Product intent: **machine notebook** on one AgentOS guest (terminal cells + NL agent + Ctrl+K control plane). See `SYSTEM.md` and `docs/ui-northstar.md`. Permanent engineering rules below.
+
 ## Only allowed build path
 
 ```bash
@@ -37,12 +39,22 @@ This product is **alpha**. Shipping a path once does **not** freeze it.
 - You may delete, rewrite, or replace subsystems (FFI surface, VT paint, main smoke flow, packaging) when that advances the vision.
 - Do **not** refuse a better design because “we already implemented X.”
 - Do **not** pile compatibility shims around dead demo structure. Replace it.
-- Still respect permanent constraints (zero local analysis, AgentOS pin model, native host only, no commit of `dist/` / tarballs).
+- Still respect permanent constraints (zero local analysis, AgentOS pin model, native host only, lib-vt only for terminal, single-machine-timeline default, no commit of `dist/` / tarballs).
 
 ## Artifacts
 
 - Stage runnables under `dist/` (gitignored).
 - Do **not** commit `linux_bundle.tar.gz`, `dist/`, or `bb-out/`.
+
+## After each implementation phase
+
+`flutter analyze` is **not** a substitute for a product build.
+
+1. Commit source (never `dist/`, tarballs, `bb-out/`).
+2. `git push origin HEAD`
+3. Run `bb remote` for `//:linux_product_bundle` (script in README).
+4. Download `linux_product.tar.gz`, stage under `dist/linux/`, make the binary executable.
+5. Tell the user the staged path and how to run it.
 
 ## After push
 

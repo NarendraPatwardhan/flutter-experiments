@@ -1,19 +1,17 @@
 import 'dart:async';
 import 'dart:io';
 
-import 'package:flutter/gestures.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/scheduler.dart';
 import 'package:flutter/services.dart';
 
+import 'notebook/controller.dart';
+import 'notebook/host_keys.dart';
+import 'notebook/model.dart';
+import 'notebook/widgets/control_plane_stub.dart';
+import 'notebook/widgets/notebook_shell.dart';
 import 'session/product_session.dart';
-import 'vt/bindings.dart'
-    show
-        kSelectionGestureDrag,
-        kSelectionGesturePress,
-        kSelectionGestureRelease;
 import 'vt/metrics.dart';
-import 'vt/painter.dart';
 import 'vt/theme.dart';
 
 void main() {
@@ -41,6 +39,9 @@ class App extends StatelessWidget {
         ),
         useMaterial3: true,
         fontFamily: 'monospace',
+        splashFactory: NoSplash.splashFactory,
+        highlightColor: const Color(0x1A7CDE9A),
+        hoverColor: const Color(0x147CDE9A),
       ),
       home: const HomePage(),
     );
@@ -56,37 +57,39 @@ class HomePage extends StatefulWidget {
 
 class _HomePageState extends State<HomePage> with SingleTickerProviderStateMixin {
   late final ProductSession _session;
+  late final NotebookController _notebook;
   late final AnimationController _blink;
+  late final TextEditingController _nlText;
+  late final FocusNode _shellFocus;
+  late final FocusNode _nlFocus;
 
-  // Re-measured after first frame so fontconfig has resolved a real mono face.
   VtMetrics _metrics = VtMetrics.measure(fontSize: 13);
-  EdgeInsets _gridPadding = const EdgeInsets.all(8);
-  bool _focused = true;
+  bool _terminalFocused = true;
   int _layoutCols = 80;
   int _layoutRows = 24;
+  EdgeInsets _gridPadding = const EdgeInsets.all(8);
   bool _starting = false;
-  /// Host-side boot diagnostic when [ProductSession] never starts.
   String? _bootError;
+  Timer? _flashTimer;
 
   @override
   void initState() {
     super.initState();
     _session = ProductSession()..addListener(_onSession);
+    _notebook = NotebookController()..addListener(_onNotebook);
+    _nlText = TextEditingController();
+    _shellFocus = FocusNode(debugLabel: 'notebook-shell');
+    _nlFocus = FocusNode(debugLabel: 'nl-composer');
     _blink = AnimationController(
       vsync: this,
       duration: const Duration(milliseconds: 530),
     )..repeat(reverse: true);
 
     SchedulerBinding.instance.addPostFrameCallback((_) {
-      // Remeasure after the first frame so fontconfig has resolved a real
-      // mono face (first measure can hit a placeholder with a fat advance,
-      // which then spaces every glyph).
       final m = VtMetrics.measure(fontSize: 13);
       if (!mounted) return;
       setState(() => _metrics = m);
       unawaited(_startSession());
-      // One more measure next frame — some hosts only bind the face after
-      // the first TextPainter touch.
       SchedulerBinding.instance.addPostFrameCallback((_) {
         if (!mounted) return;
         final m2 = VtMetrics.measure(fontSize: 13);
@@ -94,16 +97,7 @@ class _HomePageState extends State<HomePage> with SingleTickerProviderStateMixin
             m2.cellHeight != _metrics.cellHeight ||
             m2.fontFamily != _metrics.fontFamily) {
           setState(() => _metrics = m2);
-          unawaited(
-            _session.resize(
-              _layoutCols,
-              _layoutRows,
-              m2.cellWidth.round(),
-              m2.cellHeight.round(),
-              padL: _gridPadding.left.round(),
-              padT: _gridPadding.top.round(),
-            ),
-          );
+          unawaited(_resizeSession());
         }
       });
     });
@@ -113,12 +107,28 @@ class _HomePageState extends State<HomePage> with SingleTickerProviderStateMixin
     if (mounted) setState(() {});
   }
 
+  void _onNotebook() {
+    if (!mounted) return;
+    setState(() {});
+    final flash = _notebook.statusFlash;
+    if (flash != null) {
+      _flashTimer?.cancel();
+      _flashTimer = Timer(const Duration(milliseconds: 1600), () {
+        if (mounted) _notebook.clearStatusFlash();
+      });
+    }
+  }
+
   @override
   void dispose() {
+    _flashTimer?.cancel();
     _blink.dispose();
+    _nlText.dispose();
+    _nlFocus.dispose();
+    _shellFocus.dispose();
+    _notebook.removeListener(_onNotebook);
+    _notebook.dispose();
     _session.removeListener(_onSession);
-    // ProductSession.dispose drains/defers native free so an in-flight tick
-    // cannot use-after-free libghostty-vt (that corrupted GTK on close).
     _session.dispose();
     super.dispose();
   }
@@ -126,53 +136,31 @@ class _HomePageState extends State<HomePage> with SingleTickerProviderStateMixin
   ({String hostLib, String? vtLib, String kernel, String? image})?
       _locateAssets() {
     final exeDir = File(Platform.resolvedExecutable).parent.path;
-    final hostCandidates = [
+    String? pick(List<String> candidates) {
+      for (final p in candidates) {
+        if (File(p).existsSync()) return p;
+      }
+      return null;
+    }
+
+    final hostPath = pick([
       '$exeDir/lib/libagentos_flutter_host.so',
       '$exeDir/libagentos_flutter_host.so',
-    ];
-    final vtCandidates = [
+    ]);
+    final vtPath = pick([
       '$exeDir/lib/libghostty-vt.so',
       '$exeDir/libghostty-vt.so',
-    ];
-    final kernelCandidates = [
+    ]);
+    final kernelPath = pick([
       '$exeDir/data/kernel.wasm',
       '$exeDir/kernel.wasm',
-    ];
-    final imageCandidates = [
+    ]);
+    final imagePath = pick([
       '$exeDir/data/loom.tar',
       '$exeDir/data/posix.tar',
       '$exeDir/loom.tar',
       '$exeDir/posix.tar',
-    ];
-
-    String? hostPath;
-    String? vtPath;
-    String? kernelPath;
-    String? imagePath;
-    for (final p in hostCandidates) {
-      if (File(p).existsSync()) {
-        hostPath = p;
-        break;
-      }
-    }
-    for (final p in vtCandidates) {
-      if (File(p).existsSync()) {
-        vtPath = p;
-        break;
-      }
-    }
-    for (final p in kernelCandidates) {
-      if (File(p).existsSync()) {
-        kernelPath = p;
-        break;
-      }
-    }
-    for (final p in imageCandidates) {
-      if (File(p).existsSync()) {
-        imagePath = p;
-        break;
-      }
-    }
+    ]);
     if (hostPath == null || kernelPath == null) return null;
     return (
       hostLib: hostPath,
@@ -186,19 +174,20 @@ class _HomePageState extends State<HomePage> with SingleTickerProviderStateMixin
     if (_starting) return;
     _starting = true;
     _bootError = null;
+    if (mounted) setState(() {});
     try {
       final assets = _locateAssets();
       if (assets == null) {
-        _bootError = 'missing libagentos_flutter_host.so or kernel.wasm '
-            '(expected beside the binary under lib/ and data/)';
+        _bootError =
+            'missing libagentos_flutter_host.so or kernel.wasm (lib/ + data/)';
         return;
       }
       if (assets.vtLib == null) {
-        _bootError = 'missing libghostty-vt.so (expected under lib/ next to host)';
+        _bootError = 'missing libghostty-vt.so';
         return;
       }
       if (assets.image == null) {
-        _bootError = 'missing guest image (loom.tar / posix.tar under data/)';
+        _bootError = 'missing guest image (loom.tar / posix.tar)';
         return;
       }
       await _session.start(
@@ -212,7 +201,6 @@ class _HomePageState extends State<HomePage> with SingleTickerProviderStateMixin
         cellH: _metrics.cellHeight.round(),
       );
     } catch (e) {
-      // ProductSession records detail on statusLine; keep a local fallback.
       _bootError ??= 'start failed: $e';
     } finally {
       _starting = false;
@@ -220,51 +208,141 @@ class _HomePageState extends State<HomePage> with SingleTickerProviderStateMixin
     }
   }
 
-  Future<void> _rerun() async {
-    await _startSession();
-  }
-
-  void _onSurfaceLayout(Size size) {
-    final fit = _metrics.fit(size);
-    if (fit.cols == _layoutCols &&
-        fit.rows == _layoutRows &&
-        fit.padding == _gridPadding) {
-      return;
-    }
-    setState(() {
-      _layoutCols = fit.cols;
-      _layoutRows = fit.rows;
-      _gridPadding = fit.padding;
-    });
-    unawaited(
-      _session.resize(
-        fit.cols,
-        fit.rows,
-        _metrics.cellWidth.round(),
-        _metrics.cellHeight.round(),
-        padL: fit.padding.left.round(),
-        padT: fit.padding.top.round(),
-      ),
+  Future<void> _resizeSession() async {
+    if (!_session.started) return;
+    await _session.resize(
+      _layoutCols,
+      _layoutRows,
+      _metrics.cellWidth.round(),
+      _metrics.cellHeight.round(),
+      padL: _gridPadding.left.round(),
+      padT: _gridPadding.top.round(),
     );
   }
 
+  void _onTerminalLayout(int cols, int rows, EdgeInsets padding) {
+    if (cols == _layoutCols &&
+        rows == _layoutRows &&
+        padding == _gridPadding) {
+      return;
+    }
+    _layoutCols = cols;
+    _layoutRows = rows;
+    _gridPadding = padding;
+    unawaited(_resizeSession());
+  }
+
+  String get _statusText {
+    if (_bootError != null && !_session.started) return _bootError!;
+    if (!_session.started && !_session.busy) {
+      final assets = _locateAssets();
+      if (assets == null) {
+        return 'missing libagentos_flutter_host.so or kernel.wasm';
+      }
+      if (assets.vtLib == null) return 'missing libghostty-vt.so';
+      if (assets.image == null) return 'missing loom.tar / posix.tar';
+      return 'starting…';
+    }
+    return _session.statusLine;
+  }
+
+  /// Terminal / guest keys only — host chords live in [CallbackShortcuts]
+  /// so they cannot double-fire with this handler.
   KeyEventResult _onKey(FocusNode node, KeyEvent event) {
+    if (_notebook.paletteOpen) return KeyEventResult.ignored;
+
+    if (_notebook.mode == InputMode.naturalLanguage) {
+      // Escape is also in CallbackShortcuts; keep path if focus routing differs.
+      if (event is KeyDownEvent &&
+          event.logicalKey == LogicalKeyboardKey.escape) {
+        _onEscapeInAsk();
+        return KeyEventResult.handled;
+      }
+      return KeyEventResult.ignored;
+    }
+
+    // Never forward host chords to the guest.
+    if (event is KeyDownEvent || event is KeyRepeatEvent) {
+      final chord = classifyHostChord(event);
+      if (chord != null) return KeyEventResult.handled;
+    }
+
     final mod = HardwareKeyboard.instance.isControlPressed ||
         HardwareKeyboard.instance.isMetaPressed;
-    // Ctrl/Cmd+V → paste; Ctrl/Cmd+Shift+C → copy selection (Ctrl+C stays interrupt).
     if (event is KeyDownEvent && mod) {
       if (event.logicalKey == LogicalKeyboardKey.keyV) {
         unawaited(_pasteClipboard());
         return KeyEventResult.handled;
       }
+      // Ctrl+Shift+C copy — do not steal Ctrl+C (SIGINT).
       if (event.logicalKey == LogicalKeyboardKey.keyC &&
           HardwareKeyboard.instance.isShiftPressed) {
         unawaited(_copySelection());
         return KeyEventResult.handled;
       }
     }
+
     unawaited(_session.onKey(event));
     return KeyEventResult.handled;
+  }
+
+  void _onEscapeInAsk() {
+    if (_nlText.text.isNotEmpty) {
+      _nlText.clear();
+      setState(() {});
+      return;
+    }
+    _enterTerminalMode();
+  }
+
+  void _toggleMode() {
+    if (_notebook.mode == InputMode.terminal) {
+      _enterAskMode();
+    } else {
+      _enterTerminalMode();
+    }
+  }
+
+  void _enterAskMode() {
+    _notebook.setMode(InputMode.naturalLanguage);
+    setState(() => _terminalFocused = false);
+    unawaited(_session.onFocus(false));
+    // Next frame so composer is mounted.
+    SchedulerBinding.instance.addPostFrameCallback((_) {
+      if (mounted) _nlFocus.requestFocus();
+    });
+  }
+
+  void _enterTerminalMode() {
+    _notebook.setMode(InputMode.terminal);
+    setState(() => _terminalFocused = true);
+    _shellFocus.requestFocus();
+    unawaited(_session.onFocus(true));
+  }
+
+  void _submitNl() {
+    final t = _nlText.text;
+    if (!_notebook.submitUserMessage(t)) return;
+    _nlText.clear();
+    _enterTerminalMode();
+  }
+
+  Future<void> _openControlPlane() async {
+    if (_notebook.paletteOpen) return;
+    _notebook.setPaletteOpen(true);
+    await showControlPlaneStub(
+      context,
+      onFreeze: () => _notebook.freezeLive(_session),
+      onRestart: () => unawaited(_startSession()),
+      fontFamily: _metrics.fontFamily,
+    );
+    if (!mounted) return;
+    _notebook.setPaletteOpen(false);
+    if (_notebook.mode == InputMode.terminal) {
+      _shellFocus.requestFocus();
+    } else {
+      _nlFocus.requestFocus();
+    }
   }
 
   Future<void> _copySelection() async {
@@ -283,177 +361,78 @@ class _HomePageState extends State<HomePage> with SingleTickerProviderStateMixin
   }
 
   void _onFocusChange(bool gained) {
-    setState(() => _focused = gained);
+    if (_notebook.mode == InputMode.naturalLanguage) return;
+    setState(() => _terminalFocused = gained);
     unawaited(_session.onFocus(gained));
-  }
-
-  String get _statusText {
-    if (_bootError != null && !_session.started) return _bootError!;
-    if (!_session.started && !_session.busy) {
-      final assets = _locateAssets();
-      if (assets == null) {
-        return 'missing libagentos_flutter_host.so or kernel.wasm';
-      }
-      if (assets.vtLib == null) return 'missing libghostty-vt.so';
-      if (assets.image == null) return 'missing loom.tar / posix.tar';
-    }
-    return _session.statusLine;
   }
 
   @override
   Widget build(BuildContext context) {
-    final accent =
-        _session.bellFlash ? VtTheme.chromeBell : VtTheme.chromeAccent;
     final busy = _session.busy || _starting;
 
-    return Focus(
-      autofocus: true,
-      onFocusChange: _onFocusChange,
-      onKeyEvent: _onKey,
-      child: Scaffold(
-        backgroundColor: VtTheme.background,
-        body: Column(
-          crossAxisAlignment: CrossAxisAlignment.stretch,
-          children: [
-            // Thin status strip — not a Material marketing header.
-            Container(
-              height: 28,
-              padding: const EdgeInsets.symmetric(horizontal: 10),
-              decoration: BoxDecoration(
-                color: VtTheme.chromeBg,
-                border: Border(
-                  bottom: BorderSide(
-                    color: _session.bellFlash
-                        ? VtTheme.chromeBell
-                        : VtTheme.chromeBorder,
-                    width: 1,
-                  ),
-                ),
-              ),
-              child: Row(
-                children: [
-                  Text(
-                    'agentos',
-                    style: TextStyle(
-                      fontFamily: _metrics.fontFamily,
-                      fontFamilyFallback: VtMetrics.fontFamilyFallback,
-                      fontSize: 12,
-                      fontWeight: FontWeight.w600,
-                      color: accent,
-                      height: 1,
-                    ),
-                  ),
-                  const SizedBox(width: 10),
-                  Expanded(
-                    child: Text(
-                      _statusText,
-                      maxLines: 1,
-                      overflow: TextOverflow.ellipsis,
-                      style: TextStyle(
-                        fontFamily: _metrics.fontFamily,
-                        fontFamilyFallback: VtMetrics.fontFamilyFallback,
-                        fontSize: 12,
-                        color: VtTheme.chromeFg,
-                        height: 1,
-                      ),
-                    ),
-                  ),
-                  if (busy)
-                    const SizedBox(
-                      width: 12,
-                      height: 12,
-                      child: CircularProgressIndicator(
-                        strokeWidth: 1.5,
-                        color: VtTheme.chromeDim,
-                      ),
-                    )
-                  else
-                    TextButton(
-                      onPressed: _rerun,
-                      style: TextButton.styleFrom(
-                        foregroundColor: VtTheme.chromeDim,
-                        padding: const EdgeInsets.symmetric(horizontal: 8),
-                        minimumSize: const Size(0, 24),
-                        tapTargetSize: MaterialTapTargetSize.shrinkWrap,
-                      ),
-                      child: Text(
-                        'rerun',
-                        style: TextStyle(
-                          fontFamily: _metrics.fontFamily,
-                          fontSize: 12,
-                          height: 1,
-                        ),
-                      ),
-                    ),
-                ],
-              ),
-            ),
-            Expanded(
-              child: LayoutBuilder(
-                builder: (context, constraints) {
-                  final size = Size(
-                    constraints.maxWidth,
-                    constraints.maxHeight,
-                  );
-                  WidgetsBinding.instance.addPostFrameCallback((_) {
-                    if (mounted) _onSurfaceLayout(size);
-                  });
-                  return Listener(
-                    onPointerSignal: (signal) {
-                      if (signal is PointerScrollEvent) {
-                        unawaited(
-                          _session.onScroll(signal.scrollDelta.dy),
-                        );
-                      }
-                    },
-                    onPointerDown: (e) {
-                      unawaited(_session.onPointer(
-                        kind: kSelectionGesturePress,
-                        x: e.localPosition.dx,
-                        y: e.localPosition.dy,
-                        padL: _gridPadding.left.round(),
-                        padT: _gridPadding.top.round(),
-                      ));
-                    },
-                    onPointerMove: (e) {
-                      if (e.down) {
-                        unawaited(_session.onPointer(
-                          kind: kSelectionGestureDrag,
-                          x: e.localPosition.dx,
-                          y: e.localPosition.dy,
-                          padL: _gridPadding.left.round(),
-                          padT: _gridPadding.top.round(),
-                        ));
-                      }
-                    },
-                    onPointerUp: (e) {
-                      unawaited(_session.onPointer(
-                        kind: kSelectionGestureRelease,
-                        x: e.localPosition.dx,
-                        y: e.localPosition.dy,
-                        padL: _gridPadding.left.round(),
-                        padT: _gridPadding.top.round(),
-                      ));
-                    },
-                    child: AnimatedBuilder(
-                      animation: _blink,
-                      builder: (context, _) {
-                        return VtView(
-                          frame: _session.frame,
-                          metrics: _metrics,
-                          padding: _gridPadding,
-                          focused: _focused,
-                          blinkPhase: _blink.value >= 0.5,
-                          imagesBelow: _session.imagesBelow,
-                          imagesAbove: _session.imagesAbove,
-                        );
-                      },
-                    ),
-                  );
+    return CallbackShortcuts(
+      bindings: <ShortcutActivator, VoidCallback>{
+        const SingleActivator(LogicalKeyboardKey.tab, shift: true): _toggleMode,
+        const SingleActivator(LogicalKeyboardKey.keyK, control: true): () {
+          unawaited(_openControlPlane());
+        },
+        const SingleActivator(LogicalKeyboardKey.keyK, meta: true): () {
+          unawaited(_openControlPlane());
+        },
+        const SingleActivator(
+          LogicalKeyboardKey.keyF,
+          control: true,
+          shift: true,
+        ): () => _notebook.freezeLive(_session),
+        const SingleActivator(
+          LogicalKeyboardKey.keyF,
+          meta: true,
+          shift: true,
+        ): () => _notebook.freezeLive(_session),
+        const SingleActivator(LogicalKeyboardKey.enter, control: true): () {
+          if (_notebook.mode == InputMode.naturalLanguage) _submitNl();
+        },
+        const SingleActivator(LogicalKeyboardKey.enter, meta: true): () {
+          if (_notebook.mode == InputMode.naturalLanguage) _submitNl();
+        },
+        const SingleActivator(LogicalKeyboardKey.escape): () {
+          if (_notebook.mode == InputMode.naturalLanguage) _onEscapeInAsk();
+        },
+      },
+      child: Focus(
+        focusNode: _shellFocus,
+        autofocus: true,
+        onFocusChange: _onFocusChange,
+        onKeyEvent: _onKey,
+        child: Scaffold(
+          backgroundColor: VtTheme.background,
+          body: AnimatedBuilder(
+            animation: _blink,
+            builder: (context, _) {
+              final title = _session.windowTitle.isNotEmpty
+                  ? _session.windowTitle
+                  : 'agentos';
+              return NotebookShell(
+                session: _session,
+                notebook: _notebook,
+                metrics: _metrics,
+                blinkPhase: _blink.value >= 0.5,
+                terminalFocused: _terminalFocused &&
+                    _notebook.mode == InputMode.terminal,
+                statusText: _statusText,
+                busy: busy,
+                title: title,
+                nlController: _nlText,
+                nlFocus: _nlFocus,
+                onRerun: () => unawaited(_startSession()),
+                onTerminalLayout: _onTerminalLayout,
+                onNlSubmit: (t) {
+                  _nlText.value = TextEditingValue(text: t);
+                  _submitNl();
                 },
-              ),
-            ),
-          ],
+              );
+            },
+          ),
         ),
       ),
     );

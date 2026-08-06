@@ -77,6 +77,12 @@ class ProductSession extends ChangeNotifier {
   VtTerminal? get vt => _vt;
   AgentOsVm? get vm => _vm;
 
+  /// OSC title for host chrome (may be empty).
+  String get windowTitle => _title;
+
+  /// OSC pwd for host chrome (may be empty).
+  String get pwd => _pwd;
+
   /// Pre-decoded Kitty images for the painter (z < 0).
   List<VtPaintImage> get imagesBelow => _imageCache.belowText;
 

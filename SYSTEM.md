@@ -12,13 +12,19 @@ This project builds a **desktop application for Linux**.
 
 The application is a **host**. The host shows a graphical window. The host runs a **Flutter** user interface.
 
-The product is a **computer in a terminal**:
+The product is a **computer in a terminal**, presented as a **machine notebook**:
 
-1. **AgentOS** is the guest machine (kernel, image, capabilities).
-2. **libghostty-vt** is the terminal emulator core (parse, grid, encode, effects).
-3. **Flutter** presents the terminal surface and routes input.
+1. **AgentOS** is the guest machine (kernel, image, capabilities). One guest is the default world.
+2. **libghostty-vt** is the terminal emulator core (parse, grid, encode, effects) for **terminal cells**.
+3. **Flutter** presents the notebook (cells, bars, control plane, agent chrome), paints the terminal surface, and routes input.
 
-The primary product today is the **Linux binary**. The Linux binary is not a web page. The Linux binary is not a “Hello World” end goal.
+Three equal entry paths (detail in **[docs/ui-northstar.md](docs/ui-northstar.md)**):
+
+1. **Terminal cell** — type into the guest (default).
+2. **Natural language** — agent operates the **same** guest.
+3. **Control plane (Ctrl+K)** — reshape the machine (mounts, image, snapshot / restore / fork, relay).
+
+The primary product today is the **Linux binary**. The Linux binary is not a web page. The Linux binary is not a “Hello World” end goal. A closed PTY loop is **required infrastructure**, not the final product shape.
 
 The host will later support **mobile** platforms.
 
@@ -41,8 +47,14 @@ Deliver a **self-contained Linux desktop application** that:
 
 1. Load AgentOS runtime parts from the Bazel graph (kernel, guest images).
 2. Run the guest as a live session (tick, input, output).
-3. Present a Ghostty-quality terminal experience (libghostty-vt embed).
-4. Grow control-plane use (relay, snapshots, jobs) and the same model on mobile.
+3. Present a Ghostty-quality terminal experience (libghostty-vt embed) as the **default notebook cell**.
+4. Ship a **machine notebook** UI: terminal cells, natural-language turns on the same guest, thin status bars, single machine timeline.
+5. Ship a **control plane** (Ctrl+K and short-lived sheets): mounts, catalog, snapshots, restore, fork, relay, session lifecycle.
+6. Run an **agent spine** on that guest: thin loop, guest-first tools, multi-agent work (parallel / background / persistent) without split-brain REPLs; isolation via snapshot/fork when required.
+7. Use more of the AgentOS surface as product needs it (jobs, caps, mouse into guest, long-lived VM ownership).
+8. Carry the same product model to **mobile**.
+
+Product design detail: **[docs/ui-northstar.md](docs/ui-northstar.md)**, **[docs/control-plane-palette.md](docs/control-plane-palette.md)**, **[docs/agent-spine.md](docs/agent-spine.md)**.
 
 ### 2.3 Non-goals (current phase)
 
@@ -54,6 +66,11 @@ Do not treat these as the primary product:
 - Local full Flutter SDK analysis and large host-side Bazel analysis.
 - The full Ghostty **application** (GTK/macOS app, config UI). Use **libghostty-vt** only.
 - A second VT parser in pure Dart or inside AgentOS.
+- A **host IPython** (or other host REPL) as the agent’s real computer. **AgentOS is the guest computer.**
+- **N isolated REPLs** or one private machine per cell/sub-agent by default.
+- Permanent **IDE chrome** (always-on file tree, multi-column IDE shell).
+- A **second production agent loop** beside the documented agent spine.
+- Nested-terminal capability theater (tmux/truecolor doctor as product core).
 
 ### 2.4 Host path: native only (no JavaScript AgentOS host)
 
@@ -72,13 +89,16 @@ search-experience may use JS. This repository does not.
 |---------|--------|---------|
 | Guest machine, caps, tools, snapshots | AgentOS | `libagentos_flutter_host` → `KernelHost` |
 | Escape sequences, grid, styles, scrollback, input encoding | Ghostty | `libghostty-vt` |
-| Window, paint, chrome, input routing | Flutter | `lib/` |
+| Window, notebook UI, control plane chrome, agent chrome, paint, input routing | Flutter | `lib/` |
+| Agent loop, harness state, LLM transport | Agent spine (host library) | See `docs/agent-spine.md` — not inside VT |
 
 Rules:
 
 1. AgentOS must not grow a second VT parser.
 2. Flutter must not invent CSI / Kitty encodings when libghostty-vt provides encoders.
 3. Ghostty / paint / window chrome stay **out** of `libagentos_flutter_host.so`.
+4. The agent loop must not own VT parse/encode. Terminal cells use libghostty-vt.
+5. Default agent tools and sub-agents act on the **same AgentOS guest** as the terminal cells. Isolation is **control-plane fork/snapshot**, not a silent second machine.
 
 ### 2.6 Native AgentOS FFI
 
@@ -95,8 +115,10 @@ See **[docs/native-host-ffi.md](docs/native-host-ffi.md)** and **[docs/aos-c-api
 Terminal semantics come from **libghostty-vt** (pin via `MODULE.bazel` / `//third_party/ghostty`).
 
 - Dart embed: `lib/vt/*`
-- Live session owner: `lib/session/product_session.dart`
+- Live session owner: `lib/session/product_session.dart` (evolves with notebook ownership)
 - Design notes: **[docs/ghostty-vt-embed.md](docs/ghostty-vt-embed.md)**
+
+Only **one live VT** at a time for the focused terminal cell. Completed terminal cells freeze for notebook history (see ui-northstar).
 
 ---
 
@@ -106,10 +128,11 @@ Terminal semantics come from **libghostty-vt** (pin via `MODULE.bazel` / `//thir
 
 | Layer | Role |
 |-------|------|
-| **Flutter host** | Window, UI shell, paint, platform integration (Linux GTK first). |
-| **Product session** | Owns AgentOS VM + Ghostty terminal; closed PTY-shaped loop. |
+| **Flutter host** | Window, notebook UI, control plane, agent chrome, paint, platform integration (Linux GTK first). |
+| **Product session** | Owns AgentOS VM + live terminal cell loop; grows into notebook timeline ownership. |
+| **Agent spine** | LLM transport, thin agent loop, harness store, guest-first tools. Outside VT. |
 | **AgentOS native host** | C ABI over `KernelHost`. |
-| **libghostty-vt** | Virtual terminal core (embed only). |
+| **libghostty-vt** | Virtual terminal core (embed only; live terminal cell). |
 | **Bazel product graph** | App targets, pins, ship packaging. |
 | **BuildBuddy remote** | Analysis and compile. Host does not run product analysis. |
 | **Local `dist/`** | Staged run bundles. Not source of truth. |
@@ -230,7 +253,7 @@ The developer host then downloads the package and stages `dist/linux`.
 | `AGENTS.md` | Short agent work rules (must match this document). |
 | `README.md` | Human operator guide for build and run. |
 | `SYSTEM.md` | This document — system intent and permanent rules. |
-| `docs/` | Working sketches (`aos-c-api.md`, `ghostty-vt-embed.md`, `native-host-ffi.md`). Not sacred. |
+| `docs/` | Product design and implementation notes (see below). |
 | `lib/` | Dart/Flutter application source (`agent_os/`, `vt/`, `session/`, `main.dart`). |
 | `linux/` | Linux runner and CMake shell for Flutter. |
 | `native/agentos_flutter_host/` | C ABI host over `KernelHost`. |
@@ -238,6 +261,13 @@ The developer host then downloads the package and stages `dist/linux`.
 | `third_party/ghostty/` | Pin adapter for libghostty-vt. |
 | `LICENSE` | Apache-2.0 for this product (opyt.cloud). |
 | `dist/` | Local stage only (gitignored). |
+
+### 5.1 Documents under `docs/`
+
+| Kind | Examples | Role |
+|------|----------|------|
+| **Product design** | `ui-northstar.md`, `control-plane-palette.md`, `agent-spine.md`, `ui-toolkit.md`, `agentos-capabilities.md` | Product intent for UI, control plane, and agent spine. Keep aligned with this file on permanent rules. |
+| **Implementation sketches** | `aos-c-api.md`, `ghostty-vt-embed.md`, `native-host-ffi.md` | Status and embed detail. May lag on status; must not contradict permanent rules here. |
 
 Do not keep a second “old approach” tree in this repository. One product tree only.
 
@@ -260,10 +290,11 @@ Do not keep a second “old approach” tree in this repository. One product tre
 
 ### 6.3 Documentation
 
-1. Keep `README.md`, `AGENTS.md`, and `SYSTEM.md` aligned.
-2. If policy changes, update all three.
+1. Keep `README.md`, `AGENTS.md`, and `SYSTEM.md` aligned on build and pin policy.
+2. If permanent policy changes, update `SYSTEM.md` first, then agent and operator docs.
 3. Prefer STE100 in system and agent policy text.
-4. Working sketches under `docs/` may lag; when they conflict with this file on **permanent** rules, fix the sketch. When they lag on **implementation status**, update the sketch.
+4. When product design under `docs/` conflicts with this file on **permanent** rules, fix the design doc or change system intent explicitly.
+5. When implementation sketches lag on **status**, update the sketch.
 
 ### 6.4 Quality bar for the Linux host
 
@@ -279,9 +310,9 @@ Do not keep a second “old approach” tree in this repository. One product tre
 This product is **alpha**. Shipping a path once does **not** freeze it.
 
 - Prefer the right shape over preserving demo structure.
-- You may rewrite FFI, VT paint, session loop, or packaging when that advances the vision.
+- You may rewrite FFI, VT paint, session loop, notebook chrome, or packaging when that advances the vision.
 - Do not pile compatibility shims around dead code.
-- Permanent constraints stay: zero local analysis, AgentOS pin model, native host only, lib-vt only for terminal, no commit of `dist/` / tarballs.
+- Permanent constraints stay: zero local analysis, AgentOS pin model, native host only, lib-vt only for terminal, single-machine-timeline default, no commit of `dist/` / tarballs.
 
 ---
 
@@ -295,18 +326,23 @@ This product is **alpha**. Shipping a path once does **not** freeze it.
 | **D — Native FFI host** | C ABI over `KernelHost` + full Dart `AgentOsVm`; opt+strip host. | **Done** |
 | **E — Guest / image** | Loom (or product image) + kernel in `//:linux_product_bundle`. | **Done** |
 | **F — Terminal UX** | libghostty-vt embed G1–G4; live dual-host PTY loop in `ProductSession`. | **Done** |
-| **H — Machine depth** | Product uses more of the AgentOS control plane (relay, boot policy, snapshots/jobs as needed); mouse protocol into guest; scrollbar chrome; long-lived VM isolate ownership. | **Open** |
+| **H1 — Notebook spine** | Terminal-first machine notebook: cell list, one live VT + freeze path, top/bottom bars, Shift+Tab NL surface (agent may stub). | **In tree** (`lib/notebook/*`; polish continues) |
+| **H2 — Control plane** | Ctrl+K palette + sheets: snapshot / restore / fork, mounts, catalog; destructive confirms. | **Open** |
+| **H3 — Agent spine** | Thin agent loop, guest-first tools, multi-block turns; harness state; multi-agent on same guest (fork for isolation). | **Open** |
+| **H4 — Machine depth** | Deeper AgentOS wiring: relay, mouse into guest, TTY size policy, long-lived VM isolate ownership, jobs as needed. | **Open** |
 | **G — Mobile** | Same product idea on mobile platforms. | **Open** |
 
 Do not skip the pin model in phase C. Do not replace phase C with a permanent local path override.
 
 Phase C smoke target: `//:agentos_kernel` → `@agent-os//memcontainers/kernel/rust:kernel`.
 
+H1–H3 may overlap in small slices. Prefer durable session and terminal quality over multi-agent dashboards. Detail: `docs/ui-northstar.md`, `docs/agent-spine.md`, `docs/control-plane-palette.md`.
+
 ### 7.1 Coupling today (honest)
 
 **Tight (PTY loop):** guest `take_output` → `vt_write` → paint; Ghostty key/focus/paste encode and WRITE_PTY → `send_input`; effects to chrome (title, pwd, bell, clipboard, progress).
 
-**Open for phase H:** relay drain/respond in the live loop; mouse tracking → guest; first-class TTY size policy into AgentOS if required; product wiring of snapshots/jobs/FS/catalog as product needs them; worker-isolate VM owner as documented ideal.
+**Open for H1–H4:** notebook cell model and freezes; Ctrl+K and control-plane product wiring; agent loop on guest; relay drain/respond; mouse tracking → guest; TTY size policy; worker-isolate VM owner as documented ideal.
 
 The AgentOS C/Dart surface is complete for control-plane calls. The live UI session still uses the PTY subset. That is product depth, not a missing ABI.
 
@@ -332,8 +368,10 @@ The system is on the correct path when all of these are true:
 4. Product targets use `@agent-os//…` labels for AgentOS build outputs.
 5. No release tarball of AgentOS replaces the Bazel graph as the source of those outputs.
 6. Terminal I/O is a closed loop: AgentOS output → libghostty-vt → paint; encoded input → AgentOS.
-7. Web targets, if any, stay optional.
-8. This product ships under Apache-2.0 (opyt.cloud). AgentOS remains BSL 1.1 upstream.
+7. The **UI target** is a **terminal-first machine notebook** on one AgentOS guest (not a permanent raw-PTY-only demo, and not a chat app that hides the machine).
+8. Control plane and agent work treat AgentOS as the computer; default path does not create N isolated machines.
+9. Web targets, if any, stay optional.
+10. This product ships under Apache-2.0 (opyt.cloud). AgentOS remains BSL 1.1 upstream.
 
 ---
 
@@ -343,6 +381,11 @@ The system is on the correct path when all of these are true:
 |----------|---------|
 | `AGENTS.md` | Short allowed-command table for automated agents. |
 | `README.md` | Build, fetch, and run steps for operators. |
+| `docs/ui-northstar.md` | Machine notebook UI: cells, Ctrl+K, bars, contracts. |
+| `docs/control-plane-palette.md` | Ctrl+K control plane palette (kinds, modes, scorer). |
+| `docs/agent-spine.md` | Agent loop, multi-agent, continual harness on AgentOS. |
+| `docs/ui-toolkit.md` | Forui hybrid vs invent for host chrome. |
+| `docs/agentos-capabilities.md` | AgentOS capability inventory for product UI. |
 | `docs/native-host-ffi.md` | Native host FFI model. |
 | `docs/aos-c-api.md` | AgentOS C ABI sketch and status. |
 | `docs/ghostty-vt-embed.md` | libghostty-vt embed design and status. |
@@ -354,4 +397,4 @@ When this document and another document disagree on **permanent rules**, fix the
 
 ## 11. One-line summary
 
-**Ship a remote-built Linux Flutter host that runs AgentOS as a computer-in-a-terminal, with libghostty-vt as the only VT core, AgentOS as a git-pinned Bazel module, and a native C ABI host — not a local tree, not a prebuilt substitute for the graph, and not a JS host.**
+**Ship a remote-built Linux Flutter host that runs AgentOS as a computer-in-a-terminal machine notebook: libghostty-vt for terminal cells, one guest timeline, control plane and agent spine on that machine, AgentOS as a git-pinned Bazel module and native C ABI host — not a local tree, not a prebuilt substitute for the graph, not a JS host, and not a host REPL as the computer.**
