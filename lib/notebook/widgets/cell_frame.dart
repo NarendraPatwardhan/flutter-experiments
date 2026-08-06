@@ -3,7 +3,7 @@ import 'package:flutter/material.dart';
 import '../../vt/theme.dart';
 import '../chrome.dart';
 
-/// Outlined notebook cell. Parent must bound height when [expandBody] is true.
+/// Outlined notebook cell — always a visible box, not a flat strip.
 class NotebookCellFrame extends StatelessWidget {
   const NotebookCellFrame({
     super.key,
@@ -22,14 +22,16 @@ class NotebookCellFrame extends StatelessWidget {
   final bool expandBody;
   final String? fontFamily;
 
-  static const double headerHeight = 24;
+  static const double headerHeight = 26;
+
+  /// Visible outline (dark-on-dark needs more than hairline #2A2A2A).
+  static const Color outline = Color(0xFF3D3D3D);
+  static const Color outlineActive = Color(0xFF5A9E72);
 
   @override
   Widget build(BuildContext context) {
     final fam = fontFamily;
-    final borderColor =
-        active ? VtTheme.chromeAccent.withOpacity(0.55) : VtTheme.chromeBorder;
-    final borderWidth = active ? 1.25 : 1.0;
+    final borderColor = active ? outlineActive : outline;
 
     final header = SizedBox(
       height: headerHeight,
@@ -37,7 +39,7 @@ class NotebookCellFrame extends StatelessWidget {
         decoration: BoxDecoration(
           color: VtTheme.chromeBg,
           border: Border(
-            bottom: BorderSide(color: VtTheme.chromeBorder),
+            bottom: BorderSide(color: outline.withOpacity(0.9)),
           ),
         ),
         child: Padding(
@@ -66,15 +68,19 @@ class NotebookCellFrame extends StatelessWidget {
     return DecoratedBox(
       decoration: BoxDecoration(
         color: VtTheme.background,
-        border: Border.all(color: borderColor, width: borderWidth),
+        border: Border.all(color: borderColor, width: active ? 1.5 : 1.0),
+        borderRadius: BorderRadius.circular(4),
       ),
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.stretch,
-        mainAxisSize: expandBody ? MainAxisSize.max : MainAxisSize.min,
-        children: [
-          header,
-          body,
-        ],
+      child: ClipRRect(
+        borderRadius: BorderRadius.circular(3),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.stretch,
+          mainAxisSize: expandBody ? MainAxisSize.max : MainAxisSize.min,
+          children: [
+            header,
+            body,
+          ],
+        ),
       ),
     );
   }

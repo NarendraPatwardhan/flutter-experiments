@@ -56,9 +56,9 @@ class ProductSession extends ChangeNotifier {
   String? _lastError;
   bool _atPrompt = false;
   bool _shellReady = false;
-  /// Guest reported ready / timeout — still may have boot backlog in the pipe.
-  bool _wantInteractive = false;
   int _readyTicks = 0;
+  /// Partial line buffer for boot-noise filtering across take_output chunks.
+  String _bootLineCarry = '';
   AgentOsTickState? _lastTick;
   String _title = '';
   String _pwd = '';
@@ -120,8 +120,8 @@ class ProductSession extends ChangeNotifier {
     _nativeReleased = false;
     _busy = true;
     _shellReady = false;
-    _wantInteractive = false;
     _readyTicks = 0;
+    _bootLineCarry = '';
     _atPrompt = false;
     _statusLine = 'Starting…';
     _frame = VtFrame.empty(cols: cols, rows: rows);
@@ -229,24 +229,17 @@ class ProductSession extends ChangeNotifier {
       }
       if (_closed) return;
 
-      _noteInteractiveDesire();
-
       try {
         final out = await vm.takeOutput(capacity: 128 * 1024);
         if (_closed) return;
-        // Never paint guest boot diary:
-        // 1) Drop everything until we want interactive (atPrompt / timeout).
-        // 2) Keep dropping until one quiet take_output (boot backlog flushed).
-        // 3) Only then feed the VT — first paint is a clean shell.
-        if (_shellReady) {
-          if (out.isNotEmpty) {
-            vt.writeGuest(out);
+        if (out.isNotEmpty) {
+          // Strip memcontainers boot diary only — keep `$` and real shell I/O.
+          final cleaned = _stripBootNoise(out);
+          if (cleaned.isNotEmpty) {
+            vt.writeGuest(cleaned);
             _compress.onWrite(vt.native, vt.handle);
           }
-        } else if (_wantInteractive && out.isEmpty) {
-          _shellReady = true;
         }
-        // else: drop bytes (still booting or flushing backlog)
         if (_lastError != null && _lastError!.startsWith('take_output:')) {
           _lastError = null;
         }
@@ -254,6 +247,13 @@ class ProductSession extends ChangeNotifier {
         if (!_closed) _lastError = 'take_output: $e';
       }
       if (_closed) return;
+
+      _readyTicks += 1;
+      if (!_shellReady && (_atPrompt || _readyTicks >= 100)) {
+        // Flush any held non-boot partial line (often the first `$ `).
+        _flushBootCarry(vt);
+        _shellReady = true;
+      }
 
       // WRITE_PTY (query answers) → guest input path.
       final ptyChunks = vt.takePtyOutput();
@@ -395,12 +395,56 @@ class ProductSession extends ChangeNotifier {
     return '';
   }
 
-  void _noteInteractiveDesire() {
-    if (_shellReady || _wantInteractive) return;
-    _readyTicks += 1;
-    // Prefer real shell prompt. Fall back after ~3s if the flag never flips.
-    if (_atPrompt || _readyTicks >= 150) {
-      _wantInteractive = true;
+  /// Drop guest image boot banner lines; keep shell prompt and user work.
+  bool _isBootNoiseLine(String line) {
+    final t = line.trimLeft();
+    if (t.isEmpty) return false;
+    if (t.startsWith('memcontainers')) return true;
+    if (t.startsWith('Booting')) return true;
+    if (t.startsWith('Loading image')) return true;
+    if (t.startsWith('Mounting ')) return true;
+    return false;
+  }
+
+  Uint8List _stripBootNoise(Uint8List raw) {
+    final chunk = utf8.decode(raw, allowMalformed: true);
+    final text = '$_bootLineCarry$chunk';
+    _bootLineCarry = '';
+
+    final out = StringBuffer();
+    var start = 0;
+    for (var i = 0; i < text.length; i++) {
+      final ch = text.codeUnitAt(i);
+      if (ch != 0x0a /* \n */) continue;
+      final line = text.substring(start, i + 1); // include \n
+      start = i + 1;
+      if (!_isBootNoiseLine(line)) {
+        out.write(line);
+      }
+    }
+    // Incomplete trailing line — hold for next chunk (may be `$ `).
+    if (start < text.length) {
+      _bootLineCarry = text.substring(start);
+    }
+    if (out.isEmpty) return Uint8List(0);
+    return Uint8List.fromList(utf8.encode(out.toString()));
+  }
+
+  void _flushBootCarry(VtTerminal vt) {
+    if (_bootLineCarry.isEmpty) return;
+    if (_isBootNoiseLine(_bootLineCarry)) {
+      _bootLineCarry = '';
+      return;
+    }
+    try {
+      final bytes = Uint8List.fromList(utf8.encode(_bootLineCarry));
+      _bootLineCarry = '';
+      if (bytes.isNotEmpty) {
+        vt.writeGuest(bytes);
+        _compress.onWrite(vt.native, vt.handle);
+      }
+    } catch (_) {
+      _bootLineCarry = '';
     }
   }
 
@@ -650,8 +694,8 @@ class ProductSession extends ChangeNotifier {
     _started = false;
     _busy = false;
     _shellReady = false;
-    _wantInteractive = false;
     _readyTicks = 0;
+    _bootLineCarry = '';
     _atPrompt = false;
 
     await _waitForTickIdle();

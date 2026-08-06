@@ -1,5 +1,7 @@
 // Notebook model — machine notebook (docs/ui-northstar.md).
 
+import '../vt/frame.dart';
+
 /// Active input mode on the bottom surface.
 enum InputMode {
   /// Keys go to the live Ghostty / AgentOS terminal.
@@ -35,6 +37,19 @@ class AgentTurn {
   final DateTime at;
 }
 
+/// Frozen terminal snapshot (completed / left terminal cell).
+class FrozenTerminal {
+  FrozenTerminal({
+    required this.id,
+    required this.frame,
+    DateTime? at,
+  }) : at = at ?? DateTime.now();
+
+  final String id;
+  final VtFrame frame;
+  final DateTime at;
+}
+
 /// Timeline entry above the active surface (oldest → newest).
 sealed class TimelineEntry {
   const TimelineEntry();
@@ -53,6 +68,13 @@ class AgentTurnEntry extends TimelineEntry {
   final AgentTurn turn;
   @override
   String get id => turn.id;
+}
+
+class FrozenTerminalEntry extends TimelineEntry {
+  const FrozenTerminalEntry(this.cell);
+  final FrozenTerminal cell;
+  @override
+  String get id => cell.id;
 }
 
 /// Bottom-bar hint row.
@@ -95,4 +117,12 @@ class NotebookViewState {
       timelineRevision: timelineRevision ?? this.timelineRevision,
     );
   }
+}
+
+/// True if the frame has any printable content (not blank grid).
+bool frameHasInk(VtFrame frame) {
+  for (final c in frame.cells) {
+    if (c.text.isNotEmpty) return true;
+  }
+  return false;
 }

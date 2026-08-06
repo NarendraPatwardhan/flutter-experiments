@@ -12,15 +12,15 @@ import 'bottom_bar.dart';
 import 'timeline.dart';
 import 'top_bar.dart';
 
-/// Machine notebook surface (docs/ui-northstar.md).
+/// Machine notebook — Grok stack geometry.
 ///
-/// Geometry (always):
 /// ```
-///   [ air / scrollable history — void only ABOVE oldest ]
-///   [ outlined active cell — BOTTOM-ANCHORED ]
+///   [ air  /  history cells glued to bottom of this region ]
+///   [ active outlined cell — ALWAYS bottom-anchored        ]
 /// ```
-/// Active is terminal **or** ask (Shift+Tab). Never a split stack.
-/// Cells always have outlines — this is a notebook, not a raw PTY window.
+///
+/// Active is terminal **or** ask (mode of one cell). Never a split.
+/// Cold-start terminal is the same bottom cell as with history — not mid-window.
 class NotebookShell extends StatefulWidget {
   const NotebookShell({
     super.key,
@@ -76,60 +76,33 @@ class _NotebookShellState extends State<NotebookShell> {
     }
   }
 
-  Widget _active({required bool shellReady}) {
-    return ActiveInputSurface(
-      mode: widget.notebook.mode,
-      session: widget.session,
-      metrics: widget.metrics,
-      blinkPhase: widget.blinkPhase,
-      terminalFocused: widget.terminalFocused,
-      nlController: widget.nlController,
-      nlFocus: widget.nlFocus,
-      onTerminalLayout: widget.onTerminalLayout,
-      shellReady: shellReady,
-    );
-  }
-
-  /// Active height: expand for the mode, then hard-cap.
-  double _activeHeight({
-    required double bodyH,
-    required bool empty,
-    required bool isTerm,
-  }) {
-    if (empty && isTerm) {
-      // First cell alone: grow large but still a bottom cell (air above).
+  /// Bottom active height — same rules empty or not (expand → hard-cap).
+  double _activeHeight(double bodyH, bool isTerm) {
+    if (isTerm) {
+      // ~14 rows of mono + header, then hard-cap. Never ~full body mid-window.
+      final rowH = widget.metrics.cellHeight;
+      final desired = 26 + 8 + rowH * 14;
       return ExpandCap.clampHeight(
-        desired: bodyH * 0.88,
+        desired: desired,
         viewportHeight: bodyH,
-        minHeight: 200,
-        maxFraction: 0.92,
+        minHeight: 160,
+        maxFraction: 0.42,
       );
     }
-    if (empty && !isTerm) {
-      return ExpandCap.clampHeight(
-        desired: bodyH * 0.35,
-        viewportHeight: bodyH,
-        minHeight: 140,
-        maxFraction: 0.5,
-      );
-    }
-    // Timeline present: active shares space, stays bottom.
     return ExpandCap.clampHeight(
-      desired: isTerm ? bodyH * 0.42 : bodyH * 0.32,
+      desired: bodyH * 0.28,
       viewportHeight: bodyH,
-      minHeight: isTerm ? 180 : 120,
-      maxFraction: isTerm ? 0.55 : 0.45,
+      minHeight: 120,
+      maxFraction: 0.38,
     );
   }
 
   @override
   Widget build(BuildContext context) {
     final notebook = widget.notebook;
-    final mode = notebook.mode;
-    final empty = !notebook.hasTimeline;
+    final isTerm = notebook.mode == InputMode.terminal;
     final fam = widget.metrics.fontFamily;
     final shellReady = widget.session.shellReady;
-    final isTerm = mode == InputMode.terminal;
 
     return ColoredBox(
       color: VtTheme.background,
@@ -147,30 +120,37 @@ class _NotebookShellState extends State<NotebookShell> {
             child: LayoutBuilder(
               builder: (context, constraints) {
                 final bodyH = constraints.maxHeight;
-                final activeH = _activeHeight(
-                  bodyH: bodyH,
-                  empty: empty,
-                  isTerm: isTerm,
-                );
+                final activeH = _activeHeight(bodyH, isTerm);
 
-                // Always: [history-or-air] + bottom active outlined cell.
                 return Padding(
-                  padding: const EdgeInsets.fromLTRB(10, 0, 10, 8),
+                  padding: const EdgeInsets.fromLTRB(12, 4, 12, 8),
                   child: Column(
                     crossAxisAlignment: CrossAxisAlignment.stretch,
                     children: [
+                      // History (or air) — void only ABOVE content.
                       Expanded(
-                        child: empty
-                            ? const SizedBox.expand() // air above first cell
-                            : TimelinePane(
+                        child: notebook.hasTimeline
+                            ? TimelinePane(
                                 entries: notebook.timeline,
                                 scrollController: _scroll,
-                                fontFamily: fam,
-                              ),
+                                metrics: widget.metrics,
+                              )
+                            : const SizedBox.expand(),
                       ),
+                      // Active cell — always bottom.
                       SizedBox(
                         height: activeH,
-                        child: _active(shellReady: shellReady),
+                        child: ActiveInputSurface(
+                          mode: notebook.mode,
+                          session: widget.session,
+                          metrics: widget.metrics,
+                          blinkPhase: widget.blinkPhase,
+                          terminalFocused: widget.terminalFocused,
+                          nlController: widget.nlController,
+                          nlFocus: widget.nlFocus,
+                          onTerminalLayout: widget.onTerminalLayout,
+                          shellReady: shellReady,
+                        ),
                       ),
                     ],
                   ),

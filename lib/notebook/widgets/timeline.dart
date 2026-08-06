@@ -1,9 +1,11 @@
 import 'package:flutter/material.dart';
 
+import '../../vt/metrics.dart';
 import '../../vt/theme.dart';
 import '../chrome.dart';
 import '../model.dart';
 import 'cell_frame.dart';
+import 'frozen_terminal.dart';
 
 /// Outlined user turn — stacks just above the active cell.
 class UserMessageCell extends StatelessWidget {
@@ -20,7 +22,7 @@ class UserMessageCell extends StatelessWidget {
   Widget build(BuildContext context) {
     final fam = fontFamily;
     return Padding(
-      padding: const EdgeInsets.fromLTRB(0, 0, 0, 8),
+      padding: const EdgeInsets.only(bottom: 8),
       child: NotebookCellFrame(
         kindLabel: 'you',
         active: false,
@@ -54,7 +56,7 @@ class AgentTurnCell extends StatelessWidget {
   Widget build(BuildContext context) {
     final fam = fontFamily;
     return Padding(
-      padding: const EdgeInsets.fromLTRB(0, 0, 0, 8),
+      padding: const EdgeInsets.only(bottom: 8),
       child: NotebookCellFrame(
         kindLabel: 'agent',
         active: false,
@@ -85,35 +87,40 @@ class TimelinePane extends StatelessWidget {
     super.key,
     required this.entries,
     required this.scrollController,
-    this.fontFamily,
+    required this.metrics,
   });
 
   final List<TimelineEntry> entries;
   final ScrollController scrollController;
-  final String? fontFamily;
+  final VtMetrics metrics;
 
   @override
   Widget build(BuildContext context) {
     if (entries.isEmpty) return const SizedBox.expand();
 
+    final fam = metrics.fontFamily;
     // reverse: true → first child sits at the visual bottom of the pane.
     final visual = entries.reversed.toList(growable: false);
 
     return ListView.builder(
       controller: scrollController,
       reverse: true,
-      padding: const EdgeInsets.fromLTRB(10, 10, 10, 0),
+      padding: const EdgeInsets.fromLTRB(0, 8, 0, 0),
       itemCount: visual.length,
       itemBuilder: (context, i) {
         final e = visual[i];
         return switch (e) {
           UserMessageEntry(:final message) => UserMessageCell(
               message: message,
-              fontFamily: fontFamily,
+              fontFamily: fam,
             ),
           AgentTurnEntry(:final turn) => AgentTurnCell(
               turn: turn,
-              fontFamily: fontFamily,
+              fontFamily: fam,
+            ),
+          FrozenTerminalEntry(:final cell) => FrozenTerminalCell(
+              cell: cell,
+              metrics: metrics,
             ),
         };
       },

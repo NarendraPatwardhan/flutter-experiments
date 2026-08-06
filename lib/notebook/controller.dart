@@ -1,5 +1,6 @@
 import 'package:flutter/foundation.dart';
 
+import '../vt/frame.dart';
 import 'model.dart';
 
 /// Notebook UI state: mode, timeline, control-plane open.
@@ -23,12 +24,34 @@ class NotebookController extends ChangeNotifier {
     notifyListeners();
   }
 
-  void toggleMode() {
-    setMode(
-      _state.mode == InputMode.terminal
-          ? InputMode.naturalLanguage
-          : InputMode.terminal,
+  /// Leave terminal → ask. Freeze live VT into timeline so work is not lost.
+  void enterAsk({VtFrame? freezeFrame}) {
+    if (_state.mode == InputMode.naturalLanguage) return;
+    final next = List<TimelineEntry>.of(_state.timeline);
+    if (freezeFrame != null && frameHasInk(freezeFrame)) {
+      _seq += 1;
+      next.add(
+        FrozenTerminalEntry(
+          FrozenTerminal(
+            id: 'term-$_seq',
+            frame: freezeFrame.clone(),
+          ),
+        ),
+      );
+    }
+    _state = _state.copyWith(
+      timeline: next,
+      timelineRevision: next.length != _state.timeline.length
+          ? _state.timelineRevision + 1
+          : _state.timelineRevision,
+      mode: InputMode.naturalLanguage,
+      clearStatusFlash: true,
     );
+    notifyListeners();
+  }
+
+  void enterTerminal() {
+    setMode(InputMode.terminal);
   }
 
   void setPaletteOpen(bool open) {

@@ -306,7 +306,9 @@ class _HomePageState extends State<HomePage> with SingleTickerProviderStateMixin
   }
 
   void _enterAsk() {
-    _notebook.setMode(InputMode.naturalLanguage);
+    // Freeze live terminal into timeline so mode switch does not erase work.
+    final freeze = _session.started ? _session.frame : null;
+    _notebook.enterAsk(freezeFrame: freeze);
     setState(() => _terminalFocused = false);
     unawaited(_session.onFocus(false));
     SchedulerBinding.instance.addPostFrameCallback((_) {
@@ -315,7 +317,7 @@ class _HomePageState extends State<HomePage> with SingleTickerProviderStateMixin
   }
 
   void _enterTerminal() {
-    _notebook.setMode(InputMode.terminal);
+    _notebook.enterTerminal();
     setState(() => _terminalFocused = true);
     _shellFocus.requestFocus();
     unawaited(_session.onFocus(true));
