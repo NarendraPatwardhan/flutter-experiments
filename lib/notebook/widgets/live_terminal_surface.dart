@@ -1,6 +1,5 @@
 import 'dart:async';
 
-import 'package:flutter/foundation.dart';
 import 'package:flutter/gestures.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/scheduler.dart';
@@ -17,7 +16,13 @@ import '../../vt/painter.dart';
 /// Live terminal in ActiveSlot.
 ///
 /// Grid fits the cell; wheel/trackpad scrolls **VT scrollback** inside the cell.
-/// Claims [PointerScrollEvent] via [PointerSignalResolver] so nothing steals it.
+///
+/// Linux Flutter routes devices differently (see `fl_scrolling_manager.cc`):
+/// - **Mouse wheel** → [PointerScrollEvent] (pointer signal)
+/// - **Touchpad** → [PointerPanZoomUpdateEvent] (not a pointer signal)
+///
+/// Both must call [ProductSession.onScroll]. Wheel events are claimed via
+/// [PointerSignalResolver] so nothing steals them.
 class LiveTerminalSurface extends StatefulWidget {
   const LiveTerminalSurface({
     super.key,
@@ -66,17 +71,26 @@ class _LiveTerminalSurfaceState extends State<LiveTerminalSurface> {
     widget.onLayout(fit.cols, fit.rows, fit.padding);
   }
 
+  /// Prefer vertical; fall back to horizontal (sideways wheel / some pads).
+  void _scrollByPixels(double dy, double dx) {
+    var d = dy;
+    if (d == 0) d = dx;
+    if (d == 0) return;
+    unawaited(widget.session.onScroll(d));
+  }
+
   void _onPointerSignal(PointerSignalEvent signal) {
     if (signal is! PointerScrollEvent) return;
-    // Claim the scroll so no ancestor / platform default eats it.
+    // Claim the wheel signal so no ancestor / platform default eats it.
     GestureBinding.instance.pointerSignalResolver.register(signal, (event) {
       final e = event as PointerScrollEvent;
-      // Prefer vertical; fall back to horizontal for some trackpads.
-      var dy = e.scrollDelta.dy;
-      if (dy == 0) dy = e.scrollDelta.dx;
-      if (dy == 0) return;
-      unawaited(widget.session.onScroll(dy));
+      _scrollByPixels(e.scrollDelta.dy, e.scrollDelta.dx);
     });
+  }
+
+  /// Linux (and modern Flutter) trackpad scroll — not a [PointerSignalEvent].
+  void _onPointerPanZoomUpdate(PointerPanZoomUpdateEvent e) {
+    _scrollByPixels(e.panDelta.dy, e.panDelta.dx);
   }
 
   @override
@@ -90,6 +104,7 @@ class _LiveTerminalSurfaceState extends State<LiveTerminalSurface> {
         return Listener(
           behavior: HitTestBehavior.opaque,
           onPointerSignal: _onPointerSignal,
+          onPointerPanZoomUpdate: _onPointerPanZoomUpdate,
           onPointerDown: (e) {
             widget.onTap?.call();
             unawaited(widget.session.onPointer(
