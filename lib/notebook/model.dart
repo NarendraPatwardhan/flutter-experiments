@@ -127,6 +127,26 @@ bool frameHasInk(VtFrame frame) {
   return false;
 }
 
+/// Text of row [y] (0-based), trailing spaces stripped.
+String frameRowText(VtFrame frame, int y) {
+  final cols = frame.cols;
+  if (cols <= 0 || y < 0 || y >= frame.rows) return '';
+  final base = y * cols;
+  final buf = StringBuffer();
+  for (var x = 0; x < cols; x++) {
+    buf.write(frame.cells[base + x].text);
+  }
+  return buf.toString().replaceAll(RegExp(r'\s+$'), '');
+}
+
+/// True if the row is only a shell prompt waiting for input (`$`, `#`, …).
+bool frameRowIsBarePrompt(VtFrame frame, int y) {
+  final t = frameRowText(frame, y).trim();
+  if (t.isEmpty) return true;
+  // Bare prompt only — keep `$ pwd` / `# ls` (prompt + command).
+  return RegExp(r'^[\$#%❯>]{1,3}$').hasMatch(t);
+}
+
 /// 1-based count of rows that have ink (at least 1 if any ink).
 int frameUsedRows(VtFrame frame) {
   var last = -1;
@@ -144,9 +164,20 @@ int frameUsedRows(VtFrame frame) {
   return last < 0 ? 0 : last + 1;
 }
 
-/// Immutable timeline freeze: no cursor, cropped to used rows (no empty gap).
+/// Drop trailing bare-prompt / blank lines so freezes do not end on a lonely `$`.
+int frameUsedRowsForFreeze(VtFrame frame) {
+  var used = frameUsedRows(frame);
+  while (used > 1 && frameRowIsBarePrompt(frame, used - 1)) {
+    used -= 1;
+  }
+  // If everything was bare prompts, keep one row of real content if any.
+  if (used <= 0) return frameUsedRows(frame);
+  return used;
+}
+
+/// Immutable timeline freeze: no cursor, no trailing `$`, cropped to content.
 VtFrame frameForTimelineFreeze(VtFrame src) {
-  final used = frameUsedRows(src);
+  final used = frameUsedRowsForFreeze(src);
   if (used <= 0) {
     return src.clone().copyWithMeta(
       cursorVisible: false,
@@ -156,8 +187,8 @@ VtFrame frameForTimelineFreeze(VtFrame src) {
   }
   final cols = src.cols;
   final n = used * cols;
-  final cells = List<VtCell>.of(src.cells.sublist(0, n.clamp(0, src.cells.length)));
-  // Pad if sublist short (defensive).
+  final cells =
+      List<VtCell>.of(src.cells.sublist(0, n.clamp(0, src.cells.length)));
   while (cells.length < n) {
     cells.add(const VtCell());
   }

@@ -78,24 +78,17 @@ class _NotebookShellState extends State<NotebookShell> {
     }
   }
 
-  /// Bottom active height — same rules empty or not (expand → hard-cap).
-  double _activeHeight(double bodyH, bool isTerm) {
-    if (isTerm) {
-      // ~14 rows of mono + header, then hard-cap. Never ~full body mid-window.
-      final rowH = widget.metrics.cellHeight;
-      final desired = 26 + 8 + rowH * 14;
-      return ExpandCap.clampHeight(
-        desired: desired,
-        viewportHeight: bodyH,
-        minHeight: 160,
-        maxFraction: 0.42,
-      );
-    }
+  /// Bottom active height — **same** at rest for terminal and ask so mode
+  /// switch does not jump the chrome. Expand→hard-cap later when content grows.
+  double _activeHeight(double bodyH) {
+    final rowH = widget.metrics.cellHeight;
+    // header + pad + ~8 mono rows — shared rest size for both modes.
+    final desired = 26 + 10 + rowH * 8;
     return ExpandCap.clampHeight(
-      desired: bodyH * 0.28,
+      desired: desired,
       viewportHeight: bodyH,
-      minHeight: 120,
-      maxFraction: 0.38,
+      minHeight: 148,
+      maxFraction: 0.40,
     );
   }
 
