@@ -14,11 +14,11 @@ import 'nl_composer.dart';
 import 'timeline.dart';
 import 'top_bar.dart';
 
-/// Client notebook surface.
+/// Machine notebook surface.
 ///
-/// - Empty timeline + terminal: full-bleed live machine.
-/// - Timeline entries: scroll above; active surface bottom-capped.
-/// - Ask mode: live terminal above, ask cell active at bottom.
+/// - Empty + terminal: full-bleed active terminal (no fake void).
+/// - Timeline present: history scrolls above; active bottom-capped.
+/// - Ask mode: live terminal above ask cell at bottom.
 class NotebookShell extends StatefulWidget {
   const NotebookShell({
     super.key,
@@ -97,43 +97,31 @@ class _NotebookShellState extends State<NotebookShell> {
     return '${c}×$r';
   }
 
+  /// Terminal cell filling max constraints (use under Expanded or as full body).
   Widget _terminalCell({
-    required bool expand,
-    double? height,
     required bool focused,
     String? meta,
   }) {
-    final frame = NotebookCellFrame(
+    return NotebookCellFrame(
       kindLabel: 'terminal',
       metaRight: meta ?? _gridMeta,
       active: focused,
       fontFamily: widget.metrics.fontFamily,
       child: _live(focused: focused),
     );
-    if (expand) return Expanded(child: frame);
-    return SizedBox(height: height, child: frame);
   }
 
-  Widget _askStack(double bodyH) {
+  Widget _askStack() {
     final fam = widget.metrics.fontFamily;
-    final askBody = ExpandCap.clampHeight(
-      desired: bodyH * 0.28,
-      viewportHeight: bodyH,
-      minHeight: 120,
-      maxFraction: 0.40,
-    );
-    final askH = askBody + NotebookCellFrame.headerHeight;
-
     return Column(
       crossAxisAlignment: CrossAxisAlignment.stretch,
       children: [
-        _terminalCell(
-          expand: true,
-          focused: false,
-          meta: 'live',
+        Expanded(
+          flex: 3,
+          child: _terminalCell(focused: false, meta: 'live'),
         ),
-        SizedBox(
-          height: askH,
+        Expanded(
+          flex: 2,
           child: NotebookCellFrame(
             kindLabel: 'ask',
             active: true,
@@ -194,20 +182,17 @@ class _NotebookShellState extends State<NotebookShell> {
               builder: (context, constraints) {
                 final bodyH = constraints.maxHeight;
 
-                // Cold start, terminal mode: full-bleed machine.
+                // Cold start, terminal: fill the body (bounded by Expanded parent).
                 if (empty && mode == InputMode.terminal) {
-                  return _terminalCell(
-                    expand: true,
-                    focused: widget.terminalFocused,
-                  );
+                  return _terminalCell(focused: widget.terminalFocused);
                 }
 
-                // Ask with empty timeline: terminal + ask.
+                // Ask, empty timeline: flex stack (terminal + ask).
                 if (empty && mode == InputMode.naturalLanguage) {
-                  return _askStack(bodyH);
+                  return _askStack();
                 }
 
-                // Timeline + bottom-capped active surface.
+                // Timeline + bottom-capped active.
                 final activeH = ExpandCap.clampHeight(
                   desired: bodyH * 0.5,
                   viewportHeight: bodyH,
@@ -220,15 +205,16 @@ class _NotebookShellState extends State<NotebookShell> {
                   children: [
                     Expanded(child: _timeline()),
                     if (mode == InputMode.terminal)
-                      _terminalCell(
-                        expand: false,
+                      SizedBox(
                         height: activeH,
-                        focused: widget.terminalFocused,
+                        child: _terminalCell(
+                          focused: widget.terminalFocused,
+                        ),
                       )
                     else
                       SizedBox(
                         height: activeH,
-                        child: _askStack(activeH),
+                        child: _askStack(),
                       ),
                   ],
                 );
