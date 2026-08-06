@@ -14,11 +14,13 @@ import 'top_bar.dart';
 
 /// Machine notebook surface (docs/ui-northstar.md).
 ///
-/// Geometry:
-/// - Empty + terminal → full-bleed active terminal (no cell chrome).
-/// - Empty + ask → active ask bottom-anchored (air above).
-/// - Timeline → reverse list glued to active; void only above oldest.
-/// - Active is terminal **or** ask — never a split stack.
+/// Geometry (always):
+/// ```
+///   [ air / scrollable history — void only ABOVE oldest ]
+///   [ outlined active cell — BOTTOM-ANCHORED ]
+/// ```
+/// Active is terminal **or** ask (Shift+Tab). Never a split stack.
+/// Cells always have outlines — this is a notebook, not a raw PTY window.
 class NotebookShell extends StatefulWidget {
   const NotebookShell({
     super.key,
@@ -67,7 +69,6 @@ class _NotebookShellState extends State<NotebookShell> {
     final rev = widget.notebook.timelineRevision;
     if (rev != _seenRev && widget.notebook.hasTimeline) {
       _seenRev = rev;
-      // reverse:true list — jump to "0" (visual bottom / newest).
       SchedulerBinding.instance.addPostFrameCallback((_) {
         if (!_scroll.hasClients) return;
         _scroll.jumpTo(0);
@@ -75,10 +76,7 @@ class _NotebookShellState extends State<NotebookShell> {
     }
   }
 
-  Widget _active({
-    required bool showChrome,
-    required bool shellReady,
-  }) {
+  Widget _active({required bool shellReady}) {
     return ActiveInputSurface(
       mode: widget.notebook.mode,
       session: widget.session,
@@ -88,8 +86,39 @@ class _NotebookShellState extends State<NotebookShell> {
       nlController: widget.nlController,
       nlFocus: widget.nlFocus,
       onTerminalLayout: widget.onTerminalLayout,
-      showChrome: showChrome,
       shellReady: shellReady,
+    );
+  }
+
+  /// Active height: expand for the mode, then hard-cap.
+  double _activeHeight({
+    required double bodyH,
+    required bool empty,
+    required bool isTerm,
+  }) {
+    if (empty && isTerm) {
+      // First cell alone: grow large but still a bottom cell (air above).
+      return ExpandCap.clampHeight(
+        desired: bodyH * 0.88,
+        viewportHeight: bodyH,
+        minHeight: 200,
+        maxFraction: 0.92,
+      );
+    }
+    if (empty && !isTerm) {
+      return ExpandCap.clampHeight(
+        desired: bodyH * 0.35,
+        viewportHeight: bodyH,
+        minHeight: 140,
+        maxFraction: 0.5,
+      );
+    }
+    // Timeline present: active shares space, stays bottom.
+    return ExpandCap.clampHeight(
+      desired: isTerm ? bodyH * 0.42 : bodyH * 0.32,
+      viewportHeight: bodyH,
+      minHeight: isTerm ? 180 : 120,
+      maxFraction: isTerm ? 0.55 : 0.45,
     );
   }
 
@@ -118,62 +147,33 @@ class _NotebookShellState extends State<NotebookShell> {
             child: LayoutBuilder(
               builder: (context, constraints) {
                 final bodyH = constraints.maxHeight;
-
-                // ── Cold start, terminal: full-bleed, no cell chrome ──
-                if (empty && isTerm) {
-                  return _active(showChrome: false, shellReady: shellReady);
-                }
-
-                // ── Cold start, ask: air above, composer bottom ──
-                if (empty && !isTerm) {
-                  final h = ExpandCap.clampHeight(
-                    desired: bodyH * 0.35,
-                    viewportHeight: bodyH,
-                    minHeight: 140,
-                    maxFraction: 0.5,
-                  );
-                  return Column(
-                    crossAxisAlignment: CrossAxisAlignment.stretch,
-                    children: [
-                      const Expanded(child: SizedBox.expand()),
-                      SizedBox(
-                        height: h,
-                        child: _active(
-                          showChrome: true,
-                          shellReady: shellReady,
-                        ),
-                      ),
-                    ],
-                  );
-                }
-
-                // ── Timeline + bottom active (touching; void only above) ──
-                final activeDesired = isTerm ? bodyH * 0.42 : bodyH * 0.32;
-                final activeH = ExpandCap.clampHeight(
-                  desired: activeDesired,
-                  viewportHeight: bodyH,
-                  minHeight: isTerm ? 180 : 120,
-                  maxFraction: isTerm ? 0.55 : 0.45,
+                final activeH = _activeHeight(
+                  bodyH: bodyH,
+                  empty: empty,
+                  isTerm: isTerm,
                 );
 
-                return Column(
-                  crossAxisAlignment: CrossAxisAlignment.stretch,
-                  children: [
-                    Expanded(
-                      child: TimelinePane(
-                        entries: notebook.timeline,
-                        scrollController: _scroll,
-                        fontFamily: fam,
+                // Always: [history-or-air] + bottom active outlined cell.
+                return Padding(
+                  padding: const EdgeInsets.fromLTRB(10, 0, 10, 8),
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.stretch,
+                    children: [
+                      Expanded(
+                        child: empty
+                            ? const SizedBox.expand() // air above first cell
+                            : TimelinePane(
+                                entries: notebook.timeline,
+                                scrollController: _scroll,
+                                fontFamily: fam,
+                              ),
                       ),
-                    ),
-                    SizedBox(
-                      height: activeH,
-                      child: _active(
-                        showChrome: true,
-                        shellReady: shellReady,
+                      SizedBox(
+                        height: activeH,
+                        child: _active(shellReady: shellReady),
                       ),
-                    ),
-                  ],
+                    ],
+                  ),
                 );
               },
             ),

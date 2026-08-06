@@ -3,8 +3,9 @@ import 'package:flutter/material.dart';
 import '../../vt/theme.dart';
 import '../chrome.dart';
 import '../model.dart';
+import 'cell_frame.dart';
 
-/// Compact user turn — stacks just above the active surface.
+/// Outlined user turn — stacks just above the active cell.
 class UserMessageCell extends StatelessWidget {
   const UserMessageCell({
     super.key,
@@ -19,33 +20,26 @@ class UserMessageCell extends StatelessWidget {
   Widget build(BuildContext context) {
     final fam = fontFamily;
     return Padding(
-      padding: const EdgeInsets.fromLTRB(12, 10, 12, 4),
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.stretch,
-        mainAxisSize: MainAxisSize.min,
-        children: [
-          Row(
-            children: [
-              NotebookChrome.modeChip('you', fam, emphasize: true),
-              const Spacer(),
-              Text(
-                NotebookChrome.formatTime(message.at),
-                style: NotebookChrome.dim(fam, size: 10),
-              ),
-            ],
-          ),
-          const SizedBox(height: 6),
-          SelectableText(
+      padding: const EdgeInsets.fromLTRB(0, 0, 0, 8),
+      child: NotebookCellFrame(
+        kindLabel: 'you',
+        active: false,
+        expandBody: false,
+        metaRight: NotebookChrome.formatTime(message.at),
+        fontFamily: fam,
+        child: Padding(
+          padding: const EdgeInsets.fromLTRB(12, 10, 12, 12),
+          child: SelectableText(
             message.text,
             style: NotebookChrome.mono(fam, size: 13, height: 1.35),
           ),
-        ],
+        ),
       ),
     );
   }
 }
 
-/// Agent turn (H1 stub).
+/// Outlined agent turn (H1 stub).
 class AgentTurnCell extends StatelessWidget {
   const AgentTurnCell({
     super.key,
@@ -60,23 +54,16 @@ class AgentTurnCell extends StatelessWidget {
   Widget build(BuildContext context) {
     final fam = fontFamily;
     return Padding(
-      padding: const EdgeInsets.fromLTRB(12, 6, 12, 12),
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.stretch,
-        mainAxisSize: MainAxisSize.min,
-        children: [
-          Row(
-            children: [
-              NotebookChrome.modeChip('agent', fam),
-              const Spacer(),
-              Text(
-                NotebookChrome.formatTime(turn.at),
-                style: NotebookChrome.dim(fam, size: 10),
-              ),
-            ],
-          ),
-          const SizedBox(height: 6),
-          SelectableText(
+      padding: const EdgeInsets.fromLTRB(0, 0, 0, 8),
+      child: NotebookCellFrame(
+        kindLabel: 'agent',
+        active: false,
+        expandBody: false,
+        metaRight: NotebookChrome.formatTime(turn.at),
+        fontFamily: fam,
+        child: Padding(
+          padding: const EdgeInsets.fromLTRB(12, 10, 12, 12),
+          child: SelectableText(
             turn.summary,
             style: NotebookChrome.mono(
               fam,
@@ -85,14 +72,14 @@ class AgentTurnCell extends StatelessWidget {
               color: VtTheme.chromeDim,
             ),
           ),
-        ],
+        ),
       ),
     );
   }
 }
 
-/// History column: content-sized cells, list reversed so newest sits on bottom
-/// of this region (glued to the active surface). Empty space stays above.
+/// History: reverse list so newest sits on the bottom of this pane
+/// (glued to the active cell). Empty space stays above the oldest cell.
 class TimelinePane extends StatelessWidget {
   const TimelinePane({
     super.key,
@@ -115,7 +102,7 @@ class TimelinePane extends StatelessWidget {
     return ListView.builder(
       controller: scrollController,
       reverse: true,
-      padding: EdgeInsets.zero,
+      padding: const EdgeInsets.fromLTRB(10, 10, 10, 0),
       itemCount: visual.length,
       itemBuilder: (context, i) {
         final e = visual[i];
