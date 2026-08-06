@@ -5,6 +5,7 @@ Design rules for the **machine notebook** product: one AgentOS guest, one timeli
 Related:
 
 - `SYSTEM.md` — product purpose and dual-host architecture
+- `docs/notebook-components.md` — **component system** (CellChrome, ActiveSlot, freeze, overflow)
 - `docs/agentos-capabilities.md` — control-plane surface area (AgentOS)
 - `docs/control-plane-palette.md` — **Ctrl+K control plane palette**
 - `docs/agent-spine.md` — **agent loop, multi-agent, continual harness on AgentOS**

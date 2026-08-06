@@ -266,7 +266,7 @@ The developer host then downloads the package and stages `dist/linux`.
 
 | Kind | Examples | Role |
 |------|----------|------|
-| **Product design** | `ui-northstar.md`, `control-plane-palette.md`, `agent-spine.md`, `ui-toolkit.md`, `agentos-capabilities.md` | Product intent for UI, control plane, and agent spine. Keep aligned with this file on permanent rules. |
+| **Product design** | `ui-northstar.md`, `notebook-components.md`, `control-plane-palette.md`, `agent-spine.md`, `ui-toolkit.md`, `agentos-capabilities.md` | Product intent for UI, control plane, and agent spine. Keep aligned with this file on permanent rules. |
 | **Implementation sketches** | `aos-c-api.md`, `ghostty-vt-embed.md`, `native-host-ffi.md` | Status and embed detail. May lag on status; must not contradict permanent rules here. |
 
 Do not keep a second “old approach” tree in this repository. One product tree only.
