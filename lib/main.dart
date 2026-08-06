@@ -6,8 +6,8 @@ import 'package:flutter/scheduler.dart';
 import 'package:flutter/services.dart';
 
 import 'notebook/controller.dart';
+import 'notebook/document.dart';
 import 'notebook/host_keys.dart';
-import 'notebook/model.dart' show InputMode, frameHasInk;
 import 'notebook/widgets/control_plane.dart';
 import 'notebook/widgets/notebook_shell.dart';
 import 'session/product_session.dart';
@@ -29,7 +29,7 @@ class App extends StatelessWidget {
       debugShowCheckedModeBanner: false,
       theme: ThemeData(
         brightness: Brightness.dark,
-        scaffoldBackgroundColor: VtTheme.chromeBg,
+        scaffoldBackgroundColor: VtTheme.background,
         colorScheme: const ColorScheme.dark(
           surface: VtTheme.chromeBg,
           onSurface: VtTheme.chromeFg,
@@ -259,7 +259,6 @@ class _HomePageState extends State<HomePage> with SingleTickerProviderStateMixin
     unawaited(_resizeSession());
   }
 
-  /// Quiet top-bar secondary: errors, Starting, optional pwd. Never metrics.
   String? get _subtitle {
     if (_bootError != null && !_session.started) return _bootError;
     if (!_session.started) return 'Starting…';
@@ -312,13 +311,10 @@ class _HomePageState extends State<HomePage> with SingleTickerProviderStateMixin
   }
 
   void _enterAsk() {
-    // Freeze live terminal into timeline, then clear the live VT view so
-    // returning to terminal does not repeat the same screen. Guest stays put.
     final freeze = _session.started ? _session.frame : null;
-    final didFreeze = freeze != null && frameHasInk(freeze);
-    _notebook.enterAsk(freezeFrame: freeze);
-    if (didFreeze) {
-      _session.clearDisplayForNewCell();
+    final froze = _notebook.enterAsk(liveFrame: freeze);
+    if (froze) {
+      _session.beginNewTerminalSurface();
     }
     setState(() => _terminalFocused = false);
     unawaited(_session.onFocus(false));
@@ -337,7 +333,6 @@ class _HomePageState extends State<HomePage> with SingleTickerProviderStateMixin
   void _submitNl() {
     if (!_notebook.submitUserMessage(_nlText.text)) return;
     _nlText.clear();
-    // Stay in ask mode (Grok-like). Focus stays on composer.
     SchedulerBinding.instance.addPostFrameCallback((_) {
       if (mounted) _nlFocus.requestFocus();
     });

@@ -1,8 +1,8 @@
 import 'package:flutter/material.dart';
 
 import '../../vt/theme.dart';
-import '../chrome.dart';
-import '../model.dart';
+import '../document.dart';
+import 'cell_chrome.dart';
 
 class NotebookBottomBar extends StatelessWidget {
   const NotebookBottomBar({
@@ -23,7 +23,7 @@ class NotebookBottomBar extends StatelessWidget {
     final fam = fontFamily;
     return Container(
       height: height,
-      padding: const EdgeInsets.symmetric(horizontal: 10),
+      padding: const EdgeInsets.symmetric(horizontal: 12),
       decoration: const BoxDecoration(
         color: VtTheme.chromeBg,
         border: Border(top: BorderSide(color: VtTheme.chromeBorder)),
@@ -32,10 +32,10 @@ class NotebookBottomBar extends StatelessWidget {
         children: [
           for (var i = 0; i < hints.length; i++) ...[
             if (i > 0)
-              Text('  ·  ', style: NotebookChrome.dim(fam, size: 11)),
+              Text('  ·  ', style: CellChrome.dim(fam, size: 11)),
             Text(
               hints[i].keyLabel,
-              style: NotebookChrome.mono(
+              style: CellChrome.mono(
                 fam,
                 size: 11,
                 color: VtTheme.chromeAccent,
@@ -44,17 +44,17 @@ class NotebookBottomBar extends StatelessWidget {
             ),
             Text(
               ' ${hints[i].action}',
-              style: NotebookChrome.dim(fam, size: 11),
+              style: CellChrome.dim(fam, size: 11),
             ),
           ],
           const Spacer(),
           if (flash != null && flash!.isNotEmpty)
             Text(
               flash!,
-              style: NotebookChrome.mono(
+              style: CellChrome.mono(
                 fam,
                 size: 11,
-                color: VtTheme.chromeAccent,
+                color: VtTheme.chromeFg,
               ),
             ),
         ],

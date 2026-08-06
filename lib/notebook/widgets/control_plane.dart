@@ -2,7 +2,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 
 import '../../vt/theme.dart';
-import '../chrome.dart';
+import 'cell_chrome.dart';
 
 /// Control plane (Ctrl+K) — machine ops aperture.
 Future<void> showControlPlane(
@@ -140,14 +140,14 @@ class _ControlPlaneDialogState extends State<_ControlPlaneDialog> {
                     padding: const EdgeInsets.fromLTRB(16, 14, 16, 4),
                     child: Text(
                       'Control plane',
-                      style: NotebookChrome.accent(fam, size: 14),
+                      style: CellChrome.accent(fam, size: 14),
                     ),
                   ),
                   Padding(
                     padding: const EdgeInsets.fromLTRB(16, 0, 16, 10),
                     child: Text(
                       'Operate the machine under this notebook',
-                      style: NotebookChrome.dim(fam, size: 12)
+                      style: CellChrome.dim(fam, size: 12)
                           .copyWith(height: 1.3),
                     ),
                   ),
@@ -188,7 +188,7 @@ class _ControlPlaneDialogState extends State<_ControlPlaneDialog> {
                     ),
                     child: Text(
                       '↑↓ move  ·  ↵ run  ·  Esc close',
-                      style: NotebookChrome.dim(fam, size: 11),
+                      style: CellChrome.dim(fam, size: 11),
                     ),
                   ),
                 ],
@@ -266,7 +266,7 @@ class _Row extends StatelessWidget {
               children: [
                 Text(
                   label,
-                  style: NotebookChrome.mono(
+                  style: CellChrome.mono(
                     fam,
                     size: 13,
                     color: enabled
@@ -280,7 +280,7 @@ class _Row extends StatelessWidget {
                 Text(
                   secondary,
                   style:
-                      NotebookChrome.dim(fam, size: 11).copyWith(height: 1.25),
+                      CellChrome.dim(fam, size: 11).copyWith(height: 1.25),
                 ),
               ],
             ),

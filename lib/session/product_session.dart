@@ -502,29 +502,37 @@ class ProductSession extends ChangeNotifier {
     _pendingInput.add(data);
   }
 
-  /// Clear the **live VT display only** after a timeline freeze.
+  /// After a timeline freeze: reset **display only**, keep guest, reattach prompt.
   ///
-  /// AgentOS guest is untouched (same machine, cwd, processes). The next
-  /// terminal cell starts visually empty so frozen history is not repeated.
-  void clearDisplayForNewCell() {
+  /// docs/notebook-components.md §5–§6 (option A: display-only `$ ` when atPrompt).
+  void beginNewTerminalSurface() {
     final vt = _vt;
     if (vt == null || _closed) return;
     try {
-      // Erase screen + scrollback; home cursor. Does not reset the guest shell.
+      // Erase screen + scrollback; home cursor. Guest shell is not reset.
       vt.writeText('\x1b[2J\x1b[3J\x1b[H');
       _compress.onWrite(vt.native, vt.handle);
       try {
         vt.scrollViewport(bottom: true);
       } catch (_) {}
+      // Prompt reattach (H1 option A): if guest reports at-prompt, paint a
+      // quiet `$ ` so the active cell is usable without repeating freeze ink.
+      if (_atPrompt) {
+        vt.writeText('\$ ');
+        _compress.onWrite(vt.native, vt.handle);
+      }
       _frame = vt.snapshot(previous: _frame).copyWithMeta(
             cursorVisible: true,
           );
       _safeNotify();
     } catch (e) {
-      _lastError = 'clear display: $e';
+      _lastError = 'new terminal surface: $e';
       _safeNotify();
     }
   }
+
+  @Deprecated('Use beginNewTerminalSurface')
+  void clearDisplayForNewCell() => beginNewTerminalSurface();
 
   /// Map Flutter [KeyEvent] → Ghostty encoder → AgentOS send_input.
   ///

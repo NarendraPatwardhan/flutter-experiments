@@ -1,11 +1,11 @@
 import 'package:flutter/material.dart';
 
 import '../../vt/theme.dart';
-import '../chrome.dart';
+import 'cell_chrome.dart';
 
-/// Ask composer body (mode chip lives on [ActiveInputSurface]).
-class NlComposer extends StatelessWidget {
-  const NlComposer({
+/// NL composer body for ActiveSlot — docs/notebook-components.md §4.7.
+class AskSurface extends StatelessWidget {
+  const AskSurface({
     super.key,
     required this.controller,
     required this.focusNode,
@@ -27,12 +27,12 @@ class NlComposer extends StatelessWidget {
         maxLines: null,
         expands: true,
         textAlignVertical: TextAlignVertical.top,
-        style: NotebookChrome.mono(fam, size: 13, height: 1.35),
+        style: CellChrome.mono(fam, size: 13, height: 1.35),
         cursorColor: VtTheme.chromeAccent,
         decoration: InputDecoration(
           isDense: true,
           hintText: 'What should this machine do…',
-          hintStyle: NotebookChrome.dim(fam, size: 13),
+          hintStyle: CellChrome.dim(fam, size: 13),
           border: InputBorder.none,
           contentPadding: const EdgeInsets.fromLTRB(12, 10, 12, 10),
         ),

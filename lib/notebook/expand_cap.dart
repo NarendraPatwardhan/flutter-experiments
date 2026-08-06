@@ -4,7 +4,7 @@ abstract final class ExpandCap {
     required double desired,
     required double viewportHeight,
     double minHeight = 120,
-    double maxFraction = 0.5,
+    double maxFraction = 0.4,
     double absoluteMax = double.infinity,
   }) {
     if (viewportHeight <= 0) return minHeight;

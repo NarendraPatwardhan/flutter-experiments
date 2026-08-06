@@ -1,9 +1,9 @@
 import 'package:flutter/material.dart';
 
 import '../../vt/theme.dart';
-import '../chrome.dart';
+import 'cell_chrome.dart';
 
-/// Thin fixed identity bar. No metrics, no restart, no mode chip.
+/// Thin fixed identity bar — Grok-clean, quiet subtitle only.
 class NotebookTopBar extends StatelessWidget {
   const NotebookTopBar({
     super.key,
@@ -15,7 +15,6 @@ class NotebookTopBar extends StatelessWidget {
   });
 
   final String title;
-  /// Quiet secondary (pwd, short error). Never grid size or tick state.
   final String? subtitle;
   final bool busy;
   final bool bell;
@@ -43,7 +42,7 @@ class NotebookTopBar extends StatelessWidget {
         children: [
           Text(
             title,
-            style: NotebookChrome.mono(
+            style: CellChrome.mono(
               fam,
               size: 12,
               color: accent,
@@ -57,7 +56,7 @@ class NotebookTopBar extends StatelessWidget {
                 sub,
                 maxLines: 1,
                 overflow: TextOverflow.ellipsis,
-                style: NotebookChrome.dim(fam, size: 12),
+                style: CellChrome.dim(fam, size: 12),
               ),
             ),
           ] else

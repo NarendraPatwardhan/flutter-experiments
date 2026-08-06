@@ -1,55 +1,58 @@
 import 'package:flutter/foundation.dart';
 
 import '../vt/frame.dart';
-import 'model.dart';
+import 'document.dart';
+import 'freeze_policy.dart';
 
-/// Notebook UI state: mode, timeline, control-plane open.
+/// Notebook UI state machine — docs/notebook-components.md §5.
 class NotebookController extends ChangeNotifier {
   NotebookController();
 
-  NotebookViewState _state = const NotebookViewState();
+  NotebookDocument _doc = const NotebookDocument();
   int _seq = 0;
 
-  NotebookViewState get state => _state;
-  InputMode get mode => _state.mode;
-  bool get paletteOpen => _state.paletteOpen;
-  List<TimelineEntry> get timeline => _state.timeline;
-  bool get hasTimeline => _state.timeline.isNotEmpty;
-  int get timelineRevision => _state.timelineRevision;
-  String? get statusFlash => _state.statusFlash;
+  NotebookDocument get document => _doc;
+  InputMode get mode => _doc.mode;
+  bool get paletteOpen => _doc.paletteOpen;
+  List<NotebookCell> get timeline => _doc.timeline;
+  bool get hasTimeline => _doc.hasTimeline;
+  int get revision => _doc.revision;
+  String? get statusFlash => _doc.statusFlash;
 
   void setMode(InputMode mode) {
-    if (_state.mode == mode) return;
-    _state = _state.copyWith(mode: mode, clearStatusFlash: true);
-    notifyListeners();
-  }
-
-  /// Leave terminal → ask. Freeze live VT into timeline so work is not lost.
-  /// Caller should clear the live display after this so return-to-terminal
-  /// does not repeat the same screen (guest machine stays the same).
-  void enterAsk({VtFrame? freezeFrame}) {
-    if (_state.mode == InputMode.naturalLanguage) return;
-    final next = List<TimelineEntry>.of(_state.timeline);
-    if (freezeFrame != null && frameHasInk(freezeFrame)) {
-      _seq += 1;
-      next.add(
-        FrozenTerminalEntry(
-          FrozenTerminal(
-            id: 'term-$_seq',
-            frame: frameForTimelineFreeze(freezeFrame),
-          ),
-        ),
-      );
-    }
-    _state = _state.copyWith(
-      timeline: next,
-      timelineRevision: next.length != _state.timeline.length
-          ? _state.timelineRevision + 1
-          : _state.timelineRevision,
-      mode: InputMode.naturalLanguage,
+    if (_doc.mode == mode) return;
+    _doc = _doc.copyWith(
+      active: _doc.active.copyWith(mode: mode),
       clearStatusFlash: true,
     );
     notifyListeners();
+  }
+
+  /// Terminal → ask: freeze live VT into timeline if it has ink.
+  /// Caller must then [ProductSession.beginNewTerminalSurface].
+  /// Returns true if a freeze cell was appended.
+  bool enterAsk({VtFrame? liveFrame}) {
+    if (_doc.mode == InputMode.naturalLanguage) return false;
+    final next = List<NotebookCell>.of(_doc.timeline);
+    var froze = false;
+    if (liveFrame != null && FreezePolicy.hasInk(liveFrame)) {
+      _seq += 1;
+      next.add(
+        TerminalFreezeCell(
+          id: 'term-$_seq',
+          frame: FreezePolicy.apply(liveFrame),
+        ),
+      );
+      froze = true;
+    }
+    _doc = _doc.copyWith(
+      timeline: next,
+      revision: froze ? _doc.revision + 1 : _doc.revision,
+      active: _doc.active.copyWith(mode: InputMode.naturalLanguage),
+      clearStatusFlash: true,
+    );
+    notifyListeners();
+    return froze;
   }
 
   void enterTerminal() {
@@ -57,12 +60,11 @@ class NotebookController extends ChangeNotifier {
   }
 
   void setPaletteOpen(bool open) {
-    if (_state.paletteOpen == open) return;
-    _state = _state.copyWith(paletteOpen: open);
+    if (_doc.paletteOpen == open) return;
+    _doc = _doc.copyWith(paletteOpen: open);
     notifyListeners();
   }
 
-  /// Append user message + agent stub. Stays in ask mode (Grok-like).
   bool submitUserMessage(String text) {
     final t = text.trim();
     if (t.isEmpty) {
@@ -70,19 +72,22 @@ class NotebookController extends ChangeNotifier {
       return false;
     }
     _seq += 1;
-    final msg = UserMessage(id: 'msg-$_seq', text: t);
+    final you = UserMessageCell(id: 'msg-$_seq', text: t);
     _seq += 1;
-    final turn = AgentTurn(
+    final agent = AgentTurnCell(
       id: 'agent-$_seq',
       summary: 'Agent not connected yet — message recorded on this machine.',
     );
-    final next = List<TimelineEntry>.of(_state.timeline)
-      ..add(UserMessageEntry(msg))
-      ..add(AgentTurnEntry(turn));
-    _state = _state.copyWith(
+    final next = List<NotebookCell>.of(_doc.timeline)
+      ..add(you)
+      ..add(agent);
+    _doc = _doc.copyWith(
       timeline: next,
-      timelineRevision: _state.timelineRevision + 1,
-      mode: InputMode.naturalLanguage,
+      revision: _doc.revision + 1,
+      active: _doc.active.copyWith(
+        mode: InputMode.naturalLanguage,
+        askDraft: '',
+      ),
       clearStatusFlash: true,
     );
     notifyListeners();
@@ -90,25 +95,25 @@ class NotebookController extends ChangeNotifier {
   }
 
   void clearStatusFlash() {
-    if (_state.statusFlash == null) return;
-    _state = _state.copyWith(clearStatusFlash: true);
+    if (_doc.statusFlash == null) return;
+    _doc = _doc.copyWith(clearStatusFlash: true);
     notifyListeners();
   }
 
   void _flash(String msg) {
-    _state = _state.copyWith(statusFlash: msg);
+    _doc = _doc.copyWith(statusFlash: msg);
     notifyListeners();
   }
 
   List<HintItem> hintsForCurrent() {
-    if (_state.paletteOpen) {
+    if (_doc.paletteOpen) {
       return const [
         HintItem(keyLabel: 'Esc', action: 'close'),
         HintItem(keyLabel: '↑↓', action: 'move'),
         HintItem(keyLabel: '↵', action: 'run'),
       ];
     }
-    switch (_state.mode) {
+    switch (_doc.mode) {
       case InputMode.terminal:
         return const [
           HintItem(keyLabel: 'Shift+Tab', action: 'ask'),

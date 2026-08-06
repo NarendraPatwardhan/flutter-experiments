@@ -3,16 +3,16 @@ import 'package:flutter/material.dart';
 import '../../session/product_session.dart';
 import '../../vt/metrics.dart';
 import '../../vt/theme.dart';
-import '../chrome.dart';
-import '../model.dart';
-import 'cell_frame.dart';
-import 'live_terminal.dart';
-import 'nl_composer.dart';
+import '../document.dart';
+import 'ask_surface.dart';
+import 'cell_chrome.dart';
+import 'live_terminal_surface.dart';
 
-/// Bottom-anchored active cell: terminal **or** ask (mode switch, not split).
-/// Same [NotebookCellFrame] outline as history cells.
-class ActiveInputSurface extends StatelessWidget {
-  const ActiveInputSurface({
+/// Bottom active slot — docs/notebook-components.md §4.3.
+///
+/// Same rest geometry for terminal and ask; mode only swaps the body surface.
+class ActiveSlot extends StatelessWidget {
+  const ActiveSlot({
     super.key,
     required this.mode,
     required this.session,
@@ -43,7 +43,7 @@ class ActiveInputSurface extends StatelessWidget {
     final isAsk = mode == InputMode.naturalLanguage;
 
     final body = isAsk
-        ? NlComposer(
+        ? AskSurface(
             controller: nlController,
             focusNode: nlFocus,
             fontFamily: fam,
@@ -52,40 +52,27 @@ class ActiveInputSurface extends StatelessWidget {
             behavior: HitTestBehavior.opaque,
             onTap: onRequestTerminalFocus,
             child: shellReady
-                ? LiveTerminalView(
+                ? LiveTerminalSurface(
                     session: session,
                     metrics: metrics,
                     blinkPhase: blinkPhase,
                     focused: terminalFocused,
                     onLayout: onTerminalLayout,
                   )
-                : _StartingBody(fontFamily: fam),
+                : Center(
+                    child: Text(
+                      'Starting…',
+                      style: CellChrome.dim(fam, size: 13),
+                    ),
+                  ),
           );
 
-    return NotebookCellFrame(
+    return CellChrome(
       kindLabel: isAsk ? 'ask' : 'terminal',
       active: true,
       expandBody: true,
       fontFamily: fam,
-      child: body,
-    );
-  }
-}
-
-class _StartingBody extends StatelessWidget {
-  const _StartingBody({this.fontFamily});
-  final String? fontFamily;
-
-  @override
-  Widget build(BuildContext context) {
-    return ColoredBox(
-      color: VtTheme.background,
-      child: Center(
-        child: Text(
-          'Starting…',
-          style: NotebookChrome.dim(fontFamily, size: 13),
-        ),
-      ),
+      child: ColoredBox(color: VtTheme.background, child: body),
     );
   }
 }

@@ -5,22 +5,22 @@ import '../../session/product_session.dart';
 import '../../vt/metrics.dart';
 import '../../vt/theme.dart';
 import '../controller.dart';
+import '../document.dart';
 import '../expand_cap.dart';
-import '../model.dart';
-import 'active_input.dart';
+import 'active_slot.dart';
 import 'bottom_bar.dart';
-import 'timeline.dart';
+import 'cell_chrome.dart';
+import 'history_column.dart';
 import 'top_bar.dart';
 
-/// Machine notebook — Grok stack geometry.
+/// Layout-only shell — docs/notebook-components.md §8.
 ///
 /// ```
-///   [ air  /  history cells glued to bottom of this region ]
-///   [ active outlined cell — ALWAYS bottom-anchored        ]
+/// TopBar
+/// HistoryColumn (or air)
+/// ActiveSlot  ← always bottom, shared rest height
+/// BottomBar
 /// ```
-///
-/// Active is terminal **or** ask (mode of one cell). Never a split.
-/// Cold-start terminal is the same bottom cell as with history — not mid-window.
 class NotebookShell extends StatefulWidget {
   const NotebookShell({
     super.key,
@@ -68,7 +68,7 @@ class _NotebookShellState extends State<NotebookShell> {
   @override
   void didUpdateWidget(covariant NotebookShell oldWidget) {
     super.didUpdateWidget(oldWidget);
-    final rev = widget.notebook.timelineRevision;
+    final rev = widget.notebook.revision;
     if (rev != _seenRev && widget.notebook.hasTimeline) {
       _seenRev = rev;
       SchedulerBinding.instance.addPostFrameCallback((_) {
@@ -78,12 +78,10 @@ class _NotebookShellState extends State<NotebookShell> {
     }
   }
 
-  /// Bottom active height — **same** at rest for terminal and ask so mode
-  /// switch does not jump the chrome. Expand→hard-cap later when content grows.
+  /// Shared rest height for terminal **and** ask (no jump on Shift+Tab).
   double _activeHeight(double bodyH) {
     final rowH = widget.metrics.cellHeight;
-    // header + pad + ~8 mono rows — shared rest size for both modes.
-    final desired = 26 + 10 + rowH * 8;
+    final desired = CellChrome.headerHeight + 10 + rowH * 8;
     return ExpandCap.clampHeight(
       desired: desired,
       viewportHeight: bodyH,
@@ -94,9 +92,8 @@ class _NotebookShellState extends State<NotebookShell> {
 
   @override
   Widget build(BuildContext context) {
-    final notebook = widget.notebook;
+    final nb = widget.notebook;
     final fam = widget.metrics.fontFamily;
-    final shellReady = widget.session.shellReady;
 
     return ColoredBox(
       color: VtTheme.background,
@@ -115,27 +112,24 @@ class _NotebookShellState extends State<NotebookShell> {
               builder: (context, constraints) {
                 final bodyH = constraints.maxHeight;
                 final activeH = _activeHeight(bodyH);
-
                 return Padding(
                   padding: const EdgeInsets.fromLTRB(12, 4, 12, 8),
                   child: Column(
                     crossAxisAlignment: CrossAxisAlignment.stretch,
                     children: [
-                      // History (or air) — void only ABOVE content.
                       Expanded(
-                        child: notebook.hasTimeline
-                            ? TimelinePane(
-                                entries: notebook.timeline,
+                        child: nb.hasTimeline
+                            ? HistoryColumn(
+                                cells: nb.timeline,
                                 scrollController: _scroll,
                                 metrics: widget.metrics,
                               )
                             : const SizedBox.expand(),
                       ),
-                      // Active cell — always bottom.
                       SizedBox(
                         height: activeH,
-                        child: ActiveInputSurface(
-                          mode: notebook.mode,
+                        child: ActiveSlot(
+                          mode: nb.mode,
                           session: widget.session,
                           metrics: widget.metrics,
                           blinkPhase: widget.blinkPhase,
@@ -143,8 +137,9 @@ class _NotebookShellState extends State<NotebookShell> {
                           nlController: widget.nlController,
                           nlFocus: widget.nlFocus,
                           onTerminalLayout: widget.onTerminalLayout,
-                          onRequestTerminalFocus: widget.onRequestTerminalFocus,
-                          shellReady: shellReady,
+                          onRequestTerminalFocus:
+                              widget.onRequestTerminalFocus,
+                          shellReady: widget.session.shellReady,
                         ),
                       ),
                     ],
@@ -154,8 +149,8 @@ class _NotebookShellState extends State<NotebookShell> {
             ),
           ),
           NotebookBottomBar(
-            hints: notebook.hintsForCurrent(),
-            flash: notebook.statusFlash,
+            hints: nb.hintsForCurrent(),
+            flash: nb.statusFlash,
             fontFamily: fam,
           ),
         ],

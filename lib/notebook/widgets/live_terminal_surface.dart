@@ -13,37 +13,33 @@ import '../../vt/bindings.dart'
 import '../../vt/metrics.dart';
 import '../../vt/painter.dart';
 
-/// Live Ghostty terminal surface wired to [ProductSession].
+/// Live terminal in ActiveSlot — docs/notebook-components.md §4.5.
 ///
-/// Grid always fits the **cell** (not a fixed 80×24). Overflow history is
-/// VT scrollback; wheel/trackpad scrolls **inside** the cell. Paint is clipped
-/// so nothing bleeds into the notebook air above.
-class LiveTerminalView extends StatefulWidget {
-  const LiveTerminalView({
+/// Grid always fits the cell box; wheel scrolls VT scrollback inside; paint clipped.
+class LiveTerminalSurface extends StatefulWidget {
+  const LiveTerminalSurface({
     super.key,
     required this.session,
     required this.metrics,
     required this.blinkPhase,
     required this.focused,
-    this.onLayout,
+    required this.onLayout,
   });
 
   final ProductSession session;
   final VtMetrics metrics;
   final bool blinkPhase;
   final bool focused;
-
-  /// Called when grid cols/rows/padding change after fit.
-  final void Function(int cols, int rows, EdgeInsets padding)? onLayout;
+  final void Function(int cols, int rows, EdgeInsets padding) onLayout;
 
   @override
-  State<LiveTerminalView> createState() => _LiveTerminalViewState();
+  State<LiveTerminalSurface> createState() => _LiveTerminalSurfaceState();
 }
 
-class _LiveTerminalViewState extends State<LiveTerminalView> {
+class _LiveTerminalSurfaceState extends State<LiveTerminalSurface> {
   int _cols = 80;
   int _rows = 8;
-  EdgeInsets _padding = const EdgeInsets.all(8);
+  EdgeInsets _padding = const EdgeInsets.fromLTRB(8, 4, 8, 4);
 
   void _fit(Size size) {
     if (size.width < 1 || size.height < 1) return;
@@ -63,7 +59,7 @@ class _LiveTerminalViewState extends State<LiveTerminalView> {
       _rows = fit.rows;
       _padding = fit.padding;
     });
-    widget.onLayout?.call(fit.cols, fit.rows, fit.padding);
+    widget.onLayout(fit.cols, fit.rows, fit.padding);
   }
 
   @override
@@ -74,13 +70,11 @@ class _LiveTerminalViewState extends State<LiveTerminalView> {
         SchedulerBinding.instance.addPostFrameCallback((_) {
           if (mounted) _fit(size);
         });
-        // Clip hard: VT frame must never paint outside the notebook cell.
         return ClipRect(
           child: Listener(
             behavior: HitTestBehavior.opaque,
             onPointerSignal: (signal) {
               if (signal is PointerScrollEvent) {
-                // Scroll **inside** the cell (VT scrollback), not the notebook.
                 unawaited(widget.session.onScroll(signal.scrollDelta.dy));
               }
             },
