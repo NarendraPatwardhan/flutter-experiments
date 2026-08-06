@@ -1,13 +1,12 @@
 import 'package:flutter/material.dart';
 
-import '../../vt/frame.dart';
 import '../../vt/metrics.dart';
 import '../../vt/painter.dart';
 import '../chrome.dart';
 import '../model.dart';
 import 'cell_frame.dart';
 
-/// Outlined frozen terminal cell on the timeline.
+/// Outlined frozen terminal cell — tight to content, no live cursor.
 class FrozenTerminalCell extends StatelessWidget {
   const FrozenTerminalCell({
     super.key,
@@ -18,18 +17,20 @@ class FrozenTerminalCell extends StatelessWidget {
   final FrozenTerminal cell;
   final VtMetrics metrics;
 
-  static const double _maxBody = 220;
+  static const double _maxBody = 160;
+  static const EdgeInsets _pad = EdgeInsets.fromLTRB(8, 4, 8, 4);
 
   @override
   Widget build(BuildContext context) {
     final frame = cell.frame;
     final fam = metrics.fontFamily;
-    final pad = const EdgeInsets.all(8);
-    final gridH = frame.rows * metrics.cellHeight + pad.vertical;
-    final bodyH = gridH.clamp(48.0, _maxBody);
+    // Frame is already cropped to used rows at freeze time.
+    final rows = frame.rows < 1 ? 1 : frame.rows;
+    final gridH = rows * metrics.cellHeight + _pad.vertical;
+    final bodyH = gridH.clamp(metrics.cellHeight + _pad.vertical, _maxBody);
 
     return Padding(
-      padding: const EdgeInsets.only(bottom: 8),
+      padding: const EdgeInsets.only(bottom: 6),
       child: NotebookCellFrame(
         kindLabel: 'terminal',
         active: false,
@@ -44,7 +45,7 @@ class FrozenTerminalCell extends StatelessWidget {
               painter: VtPainter(
                 frame: frame,
                 metrics: metrics,
-                padding: pad,
+                padding: _pad,
                 focused: false,
                 blinkPhase: false,
               ),

@@ -25,6 +25,8 @@ class NotebookController extends ChangeNotifier {
   }
 
   /// Leave terminal → ask. Freeze live VT into timeline so work is not lost.
+  /// Caller should clear the live display after this so return-to-terminal
+  /// does not repeat the same screen (guest machine stays the same).
   void enterAsk({VtFrame? freezeFrame}) {
     if (_state.mode == InputMode.naturalLanguage) return;
     final next = List<TimelineEntry>.of(_state.timeline);
@@ -34,7 +36,7 @@ class NotebookController extends ChangeNotifier {
         FrozenTerminalEntry(
           FrozenTerminal(
             id: 'term-$_seq',
-            frame: freezeFrame.clone(),
+            frame: frameForTimelineFreeze(freezeFrame),
           ),
         ),
       );

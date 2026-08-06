@@ -7,7 +7,7 @@ import 'package:flutter/services.dart';
 
 import 'notebook/controller.dart';
 import 'notebook/host_keys.dart';
-import 'notebook/model.dart';
+import 'notebook/model.dart' show InputMode, frameHasInk;
 import 'notebook/widgets/control_plane.dart';
 import 'notebook/widgets/notebook_shell.dart';
 import 'session/product_session.dart';
@@ -312,9 +312,14 @@ class _HomePageState extends State<HomePage> with SingleTickerProviderStateMixin
   }
 
   void _enterAsk() {
-    // Freeze live terminal into timeline so mode switch does not erase work.
+    // Freeze live terminal into timeline, then clear the live VT view so
+    // returning to terminal does not repeat the same screen. Guest stays put.
     final freeze = _session.started ? _session.frame : null;
+    final didFreeze = freeze != null && frameHasInk(freeze);
     _notebook.enterAsk(freezeFrame: freeze);
+    if (didFreeze) {
+      _session.clearDisplayForNewCell();
+    }
     setState(() => _terminalFocused = false);
     unawaited(_session.onFocus(false));
     SchedulerBinding.instance.addPostFrameCallback((_) {

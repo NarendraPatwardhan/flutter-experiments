@@ -502,6 +502,27 @@ class ProductSession extends ChangeNotifier {
     _pendingInput.add(data);
   }
 
+  /// Clear the **live VT display only** after a timeline freeze.
+  ///
+  /// AgentOS guest is untouched (same machine, cwd, processes). The next
+  /// terminal cell starts visually empty so frozen history is not repeated.
+  void clearDisplayForNewCell() {
+    final vt = _vt;
+    if (vt == null || _closed) return;
+    try {
+      // Erase screen + scrollback; home cursor. Does not reset the guest shell.
+      vt.writeText('\x1b[2J\x1b[3J\x1b[H');
+      _compress.onWrite(vt.native, vt.handle);
+      _frame = vt.snapshot(previous: _frame).copyWithMeta(
+            cursorVisible: true,
+          );
+      _safeNotify();
+    } catch (e) {
+      _lastError = 'clear display: $e';
+      _safeNotify();
+    }
+  }
+
   /// Map Flutter [KeyEvent] → Ghostty encoder → AgentOS send_input.
   ///
   /// Does **not** hand-roll CSI. Unmapped keys use [kKeyUNIDENTIFIED] with UTF-8.
