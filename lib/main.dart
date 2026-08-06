@@ -85,6 +85,9 @@ class _HomePageState extends State<HomePage> with SingleTickerProviderStateMixin
       duration: const Duration(milliseconds: 530),
     )..repeat(reverse: true);
 
+    // App-level handler: runs before Focus/VT routing so host chords always work.
+    HardwareKeyboard.instance.addHandler(_onHardwareKey);
+
     SchedulerBinding.instance.addPostFrameCallback((_) {
       final m = VtMetrics.measure(fontSize: 13);
       if (!mounted) return;
@@ -121,6 +124,7 @@ class _HomePageState extends State<HomePage> with SingleTickerProviderStateMixin
 
   @override
   void dispose() {
+    HardwareKeyboard.instance.removeHandler(_onHardwareKey);
     _flashTimer?.cancel();
     _blink.dispose();
     _nlText.dispose();
@@ -131,6 +135,39 @@ class _HomePageState extends State<HomePage> with SingleTickerProviderStateMixin
     _session.removeListener(_onSession);
     _session.dispose();
     super.dispose();
+  }
+
+  /// Returns true = consume (do not deliver to Focus/TextField/guest).
+  bool _onHardwareKey(KeyEvent event) {
+    if (!mounted) return false;
+    if (_notebook.paletteOpen) {
+      // Dialog owns keys while open.
+      return false;
+    }
+
+    final chord = classifyHostChord(event);
+    if (chord == null) return false;
+
+    switch (chord) {
+      case HostChord.controlPlane:
+        unawaited(_openControlPlane());
+        return true;
+      case HostChord.toggleMode:
+        _toggleMode();
+        return true;
+      case HostChord.nlSubmit:
+        if (_notebook.mode == InputMode.naturalLanguage) {
+          _submitNl();
+          return true;
+        }
+        return false;
+      case HostChord.escape:
+        if (_notebook.mode == InputMode.naturalLanguage) {
+          _onEscapeInAsk();
+          return true;
+        }
+        return false;
+    }
   }
 
   ({String hostLib, String? vtLib, String kernel, String? image})?
@@ -246,25 +283,16 @@ class _HomePageState extends State<HomePage> with SingleTickerProviderStateMixin
     return _session.statusLine;
   }
 
-  /// Terminal / guest keys only — host chords live in [CallbackShortcuts]
-  /// so they cannot double-fire with this handler.
+  /// Guest terminal keys only (host chords handled in [_onHardwareKey]).
   KeyEventResult _onKey(FocusNode node, KeyEvent event) {
     if (_notebook.paletteOpen) return KeyEventResult.ignored;
-
     if (_notebook.mode == InputMode.naturalLanguage) {
-      // Escape is also in CallbackShortcuts; keep path if focus routing differs.
-      if (event is KeyDownEvent &&
-          event.logicalKey == LogicalKeyboardKey.escape) {
-        _onEscapeInAsk();
-        return KeyEventResult.handled;
-      }
       return KeyEventResult.ignored;
     }
 
-    // Never forward host chords to the guest.
-    if (event is KeyDownEvent || event is KeyRepeatEvent) {
-      final chord = classifyHostChord(event);
-      if (chord != null) return KeyEventResult.handled;
+    // Belt-and-suspenders: never forward host chords if handler missed them.
+    if (classifyHostChord(event) != null) {
+      return KeyEventResult.handled;
     }
 
     final mod = HardwareKeyboard.instance.isControlPressed ||
@@ -274,7 +302,6 @@ class _HomePageState extends State<HomePage> with SingleTickerProviderStateMixin
         unawaited(_pasteClipboard());
         return KeyEventResult.handled;
       }
-      // Ctrl+Shift+C copy — do not steal Ctrl+C (SIGINT).
       if (event.logicalKey == LogicalKeyboardKey.keyC &&
           HardwareKeyboard.instance.isShiftPressed) {
         unawaited(_copySelection());
@@ -307,7 +334,6 @@ class _HomePageState extends State<HomePage> with SingleTickerProviderStateMixin
     _notebook.setMode(InputMode.naturalLanguage);
     setState(() => _terminalFocused = false);
     unawaited(_session.onFocus(false));
-    // Next frame so composer is mounted.
     SchedulerBinding.instance.addPostFrameCallback((_) {
       if (mounted) _nlFocus.requestFocus();
     });
@@ -332,7 +358,6 @@ class _HomePageState extends State<HomePage> with SingleTickerProviderStateMixin
     _notebook.setPaletteOpen(true);
     await showControlPlaneStub(
       context,
-      onFreeze: () => _notebook.freezeLive(_session),
       onRestart: () => unawaited(_startSession()),
       fontFamily: _metrics.fontFamily,
     );
@@ -370,69 +395,36 @@ class _HomePageState extends State<HomePage> with SingleTickerProviderStateMixin
   Widget build(BuildContext context) {
     final busy = _session.busy || _starting;
 
-    return CallbackShortcuts(
-      bindings: <ShortcutActivator, VoidCallback>{
-        const SingleActivator(LogicalKeyboardKey.tab, shift: true): _toggleMode,
-        const SingleActivator(LogicalKeyboardKey.keyK, control: true): () {
-          unawaited(_openControlPlane());
-        },
-        const SingleActivator(LogicalKeyboardKey.keyK, meta: true): () {
-          unawaited(_openControlPlane());
-        },
-        const SingleActivator(
-          LogicalKeyboardKey.keyF,
-          control: true,
-          shift: true,
-        ): () => _notebook.freezeLive(_session),
-        const SingleActivator(
-          LogicalKeyboardKey.keyF,
-          meta: true,
-          shift: true,
-        ): () => _notebook.freezeLive(_session),
-        const SingleActivator(LogicalKeyboardKey.enter, control: true): () {
-          if (_notebook.mode == InputMode.naturalLanguage) _submitNl();
-        },
-        const SingleActivator(LogicalKeyboardKey.enter, meta: true): () {
-          if (_notebook.mode == InputMode.naturalLanguage) _submitNl();
-        },
-        const SingleActivator(LogicalKeyboardKey.escape): () {
-          if (_notebook.mode == InputMode.naturalLanguage) _onEscapeInAsk();
-        },
-      },
-      child: Focus(
-        focusNode: _shellFocus,
-        autofocus: true,
-        onFocusChange: _onFocusChange,
-        onKeyEvent: _onKey,
-        child: Scaffold(
-          backgroundColor: VtTheme.background,
-          body: AnimatedBuilder(
-            animation: _blink,
-            builder: (context, _) {
-              final title = _session.windowTitle.isNotEmpty
-                  ? _session.windowTitle
-                  : 'agentos';
-              return NotebookShell(
-                session: _session,
-                notebook: _notebook,
-                metrics: _metrics,
-                blinkPhase: _blink.value >= 0.5,
-                terminalFocused: _terminalFocused &&
-                    _notebook.mode == InputMode.terminal,
-                statusText: _statusText,
-                busy: busy,
-                title: title,
-                nlController: _nlText,
-                nlFocus: _nlFocus,
-                onRerun: () => unawaited(_startSession()),
-                onTerminalLayout: _onTerminalLayout,
-                onNlSubmit: (t) {
-                  _nlText.value = TextEditingValue(text: t);
-                  _submitNl();
-                },
-              );
-            },
-          ),
+    return Focus(
+      focusNode: _shellFocus,
+      autofocus: true,
+      onFocusChange: _onFocusChange,
+      onKeyEvent: _onKey,
+      child: Scaffold(
+        backgroundColor: VtTheme.background,
+        body: AnimatedBuilder(
+          animation: _blink,
+          builder: (context, _) {
+            return NotebookShell(
+              session: _session,
+              notebook: _notebook,
+              metrics: _metrics,
+              blinkPhase: _blink.value >= 0.5,
+              terminalFocused:
+                  _terminalFocused && _notebook.mode == InputMode.terminal,
+              statusText: _statusText,
+              busy: busy,
+              title: 'agentos',
+              nlController: _nlText,
+              nlFocus: _nlFocus,
+              onRerun: () => unawaited(_startSession()),
+              onTerminalLayout: _onTerminalLayout,
+              onNlSubmit: (t) {
+                _nlText.value = TextEditingValue(text: t);
+                _submitNl();
+              },
+            );
+          },
         ),
       ),
     );

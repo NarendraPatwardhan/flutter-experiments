@@ -4,10 +4,9 @@ import 'package:flutter/services.dart';
 import '../../vt/theme.dart';
 import '../chrome.dart';
 
-/// Control-plane aperture (Ctrl+K). Live actions only; reserved rows stay quiet.
+/// Control-plane aperture (Ctrl+K).
 Future<void> showControlPlaneStub(
   BuildContext context, {
-  required VoidCallback onFreeze,
   VoidCallback? onRestart,
   String? fontFamily,
 }) {
@@ -16,7 +15,6 @@ Future<void> showControlPlaneStub(
     barrierColor: const Color(0x990A0A0A),
     builder: (ctx) {
       return _ControlPlaneDialog(
-        onFreeze: onFreeze,
         onRestart: onRestart,
         fontFamily: fontFamily,
       );
@@ -26,12 +24,10 @@ Future<void> showControlPlaneStub(
 
 class _ControlPlaneDialog extends StatefulWidget {
   const _ControlPlaneDialog({
-    required this.onFreeze,
     this.onRestart,
     this.fontFamily,
   });
 
-  final VoidCallback onFreeze;
   final VoidCallback? onRestart;
   final String? fontFamily;
 
@@ -43,19 +39,10 @@ class _ControlPlaneDialogState extends State<_ControlPlaneDialog> {
   int _index = 0;
 
   late final List<_Item> _items = [
-    _Item(
-      label: 'Freeze terminal',
-      secondary: 'Pin the current screen into notebook history',
-      enabled: true,
-      run: () {
-        Navigator.of(context).pop();
-        widget.onFreeze();
-      },
-    ),
     if (widget.onRestart != null)
       _Item(
         label: 'Restart session',
-        secondary: 'Reboot guest and terminal (loses unsaved guest state)',
+        secondary: 'Reboot guest and terminal',
         enabled: true,
         run: () {
           Navigator.of(context).pop();
@@ -78,6 +65,14 @@ class _ControlPlaneDialogState extends State<_ControlPlaneDialog> {
       enabled: false,
     ),
   ];
+
+  @override
+  void initState() {
+    super.initState();
+    // Prefer first enabled row.
+    final first = _items.indexWhere((e) => e.enabled);
+    if (first >= 0) _index = first;
+  }
 
   void _move(int delta) {
     final enabledIdx = <int>[];
@@ -160,7 +155,8 @@ class _ControlPlaneDialogState extends State<_ControlPlaneDialog> {
                     padding: const EdgeInsets.fromLTRB(16, 0, 16, 10),
                     child: Text(
                       'Operate the machine under this notebook',
-                      style: NotebookChrome.dim(fam, size: 12).copyWith(height: 1.3),
+                      style:
+                          NotebookChrome.dim(fam, size: 12).copyWith(height: 1.3),
                     ),
                   ),
                   Expanded(
@@ -263,9 +259,8 @@ class _Row extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    final bg = active && enabled
-        ? const Color(0x1A7CDE9A)
-        : Colors.transparent;
+    final bg =
+        active && enabled ? const Color(0x1A7CDE9A) : Colors.transparent;
     return MouseRegion(
       onEnter: onHover == null ? null : (_) => onHover!(),
       child: Material(
@@ -287,13 +282,15 @@ class _Row extends StatelessWidget {
                     color: enabled
                         ? (active ? VtTheme.chromeAccent : VtTheme.chromeFg)
                         : VtTheme.chromeDim,
-                    weight: active && enabled ? FontWeight.w600 : FontWeight.w400,
+                    weight:
+                        active && enabled ? FontWeight.w600 : FontWeight.w400,
                   ),
                 ),
                 const SizedBox(height: 3),
                 Text(
                   secondary,
-                  style: NotebookChrome.dim(fam, size: 11).copyWith(height: 1.25),
+                  style:
+                      NotebookChrome.dim(fam, size: 11).copyWith(height: 1.25),
                 ),
               ],
             ),

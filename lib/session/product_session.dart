@@ -364,11 +364,10 @@ class ProductSession extends ChangeNotifier {
 
   String _composeStatus(VtTerminal vt) {
     if (_lastError != null) return 'error: $_lastError';
+    // Do not echo product name here — the top bar already shows title/windowTitle.
     final parts = <String>[];
-    if (_title.isNotEmpty) {
+    if (_title.isNotEmpty && _title.toLowerCase() != 'agentos') {
       parts.add(_title);
-    } else {
-      parts.add('agentos');
     }
     if (_pwd.isNotEmpty) {
       var p = _pwd;
@@ -384,12 +383,14 @@ class ProductSession extends ChangeNotifier {
     if (_lastTick == AgentOsTickState.waiting) parts.add('wait');
     final prog = _progress;
     if (prog != null) {
-      parts.add(_formatProgress(prog));
+      final s = _formatProgress(prog);
+      if (s.isNotEmpty) parts.add(s);
     }
     if (_lastNotification != null && _lastNotification!.isNotEmpty) {
       parts.add('notify: $_lastNotification');
     }
-    return parts.join('  ·  ');
+    if (parts.isEmpty) return 'live';
+    return parts.join(' · ');
   }
 
   String _formatProgress(VtChromeProgress p) {

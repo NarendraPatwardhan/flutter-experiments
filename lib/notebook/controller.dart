@@ -128,10 +128,6 @@ class NotebookController extends ChangeNotifier {
             keyLabel: hostChordKeyLabel(HostChord.controlPlane),
             action: 'control plane',
           ),
-          HintItem(
-            keyLabel: hostChordKeyLabel(HostChord.freeze),
-            action: 'freeze',
-          ),
         ];
       case InputMode.naturalLanguage:
         return [
