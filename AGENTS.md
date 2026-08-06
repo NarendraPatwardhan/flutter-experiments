@@ -6,9 +6,13 @@ Product intent: **machine notebook** on one AgentOS guest (terminal cells + NL a
 
 ```bash
 git push origin HEAD
-bb remote --run_from_branch=main --os=linux --timeout=2h --script '…'
-# Fetch artifacts from the BuildBuddy invocation (bytestream / UI).
+bb remote --run_from_branch=main --os=linux --timeout=2h \
+  build //:linux_product_bundle --remote_download_toplevel
+# Client log must show: Downloaded artifacts: bb-out/.../linux_product.tar.gz
 # Stage under dist/ for local run only — never commit dist/ or *.tar.gz.
+rm -rf dist/linux && mkdir -p dist/linux
+tar -C dist/linux -xzf bb-out/bazel-out/k8-fastbuild/bin/linux_product.tar.gz
+chmod +x dist/linux/flutter_bazel_hello
 ```
 
 Primary ship target: **`//:linux_product_bundle`**. Also: `//:app.linux`, `//:agentos_native_bundle`. Optional: `//:app.web`, `//:widget_test`.
@@ -52,8 +56,8 @@ This product is **alpha**. Shipping a path once does **not** freeze it.
 
 1. Commit source (never `dist/`, tarballs, `bb-out/`).
 2. `git push origin HEAD`
-3. Run `bb remote` for `//:linux_product_bundle` (script in README).
-4. Download `linux_product.tar.gz`, stage under `dist/linux/`, make the binary executable.
+3. **One** `bb remote … build //:linux_product_bundle --remote_download_toplevel` (fetch is part of this invocation — not a separate API/bytestream step).
+4. Stage `bb-out/.../linux_product.tar.gz` → `dist/linux/`, make the binary executable.
 5. Tell the user the staged path and how to run it.
 
 ## After push

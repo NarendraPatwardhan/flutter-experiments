@@ -25,26 +25,20 @@ AgentOS is **not** vendored and **not** a `local_path_override`. Root `MODULE.ba
 
 ```bash
 bb login   # once
-git push origin main
+git push origin HEAD
 
-bb remote --run_from_branch=main --os=linux --timeout=2h --script '
-set -euo pipefail
-export DEBIAN_FRONTEND=noninteractive
-if ! pkg-config --exists gtk+-3.0 2>/dev/null; then
-  sudo apt-get update -qq
-  sudo apt-get install -y -qq clang cmake ninja-build pkg-config libgtk-3-dev liblzma-dev
-fi
-bazel build //:linux_product_bundle --remote_download_toplevel
-mkdir -p /home/buildbuddy/workspace/artifacts/command-0
-cp bazel-bin/linux_product.tar.gz /home/buildbuddy/workspace/artifacts/command-0/
-'
+# One invocation: remote analysis/build + download of toplevel outputs into bb-out/
+bb remote --run_from_branch=main --os=linux --timeout=2h \
+  build //:linux_product_bundle --remote_download_toplevel
 
-# Download linux_product.tar.gz from the invocation, then:
+# Stage for local run (never commit dist/ or tarballs)
 rm -rf dist/linux && mkdir -p dist/linux
-tar -C dist/linux -xzf linux_product.tar.gz
+tar -C dist/linux -xzf bb-out/bazel-out/k8-fastbuild/bin/linux_product.tar.gz
 chmod +x dist/linux/flutter_bazel_hello
 cd dist/linux && ./flutter_bazel_hello
 ```
+
+Do **not** treat a separate bytestream/API download as the normal path. Fetch is part of `bb remote build … --remote_download_toplevel` (look for `Downloaded artifacts:` in the client log).
 
 On launch the app boots **kernel + loom** and a **libghostty-vt** live session (tick → VT → paint; keys/paste → guest).
 Assets: `lib/libagentos_flutter_host.so`, `lib/libghostty-vt.so`, `data/kernel.wasm`, `data/loom.tar`.
