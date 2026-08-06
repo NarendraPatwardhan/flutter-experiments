@@ -3,24 +3,18 @@ import 'package:flutter/material.dart';
 import '../../vt/theme.dart';
 import '../chrome.dart';
 
-/// Ask-mode editor body. [NotebookCellFrame] supplies the cell header.
+/// Ask composer body. Parent [NotebookCellFrame] owns the header.
 class NlComposer extends StatelessWidget {
   const NlComposer({
     super.key,
     required this.controller,
     required this.focusNode,
-    required this.onSubmit,
     this.fontFamily,
-    this.viewportHeight = 400,
   });
 
   final TextEditingController controller;
   final FocusNode focusNode;
-  final void Function(String text) onSubmit;
   final String? fontFamily;
-
-  /// Reserved for callers that size the parent cell; field fills the cell body.
-  final double viewportHeight;
 
   @override
   Widget build(BuildContext context) {

@@ -1,34 +1,17 @@
-// Notebook spine model — pure types (SYSTEM H1 / docs/ui-northstar.md).
-
-import '../vt/frame.dart';
+// Notebook model — machine notebook (docs/ui-northstar.md).
 
 /// Active input mode on the bottom surface.
 enum InputMode {
-  /// Keys go to the live Ghostty/AgentOS terminal cell.
+  /// Keys go to the live Ghostty / AgentOS terminal.
   terminal,
 
-  /// Host multiline composer; submit records a user turn (agent runtime later).
+  /// Natural-language composer on the same machine.
   naturalLanguage,
 }
 
-/// One frozen terminal snapshot above the live surface.
-class FrozenTerminalCell {
-  FrozenTerminalCell({
-    required this.id,
-    required this.frame,
-    DateTime? frozenAt,
-    this.label,
-  }) : frozenAt = frozenAt ?? DateTime.now();
-
-  final String id;
-  final VtFrame frame;
-  final DateTime frozenAt;
-  final String? label;
-}
-
-/// User natural-language turn in history (before agent runtime exists).
-class UserMessageCell {
-  UserMessageCell({
+/// User message recorded in the timeline.
+class UserMessage {
+  UserMessage({
     required this.id,
     required this.text,
     DateTime? at,
@@ -39,88 +22,57 @@ class UserMessageCell {
   final DateTime at;
 }
 
-/// Quiet host notice (freeze confirmation, errors) — short, user-facing.
-class SystemNoticeCell {
-  SystemNoticeCell({
-    required this.id,
-    required this.message,
-    DateTime? at,
-  }) : at = at ?? DateTime.now();
-
-  final String id;
-  final String message;
-  final DateTime at;
-}
-
-/// History entry above the active region.
-sealed class NotebookHistoryEntry {
-  const NotebookHistoryEntry();
+/// Timeline entry above the active surface (oldest → newest).
+sealed class TimelineEntry {
+  const TimelineEntry();
   String get id;
 }
 
-class FrozenTerminalEntry extends NotebookHistoryEntry {
-  const FrozenTerminalEntry(this.cell);
-  final FrozenTerminalCell cell;
+class UserMessageEntry extends TimelineEntry {
+  const UserMessageEntry(this.message);
+  final UserMessage message;
   @override
-  String get id => cell.id;
+  String get id => message.id;
 }
 
-class UserMessageEntry extends NotebookHistoryEntry {
-  const UserMessageEntry(this.cell);
-  final UserMessageCell cell;
-  @override
-  String get id => cell.id;
-}
-
-class SystemNoticeEntry extends NotebookHistoryEntry {
-  const SystemNoticeEntry(this.cell);
-  final SystemNoticeCell cell;
-  @override
-  String get id => cell.id;
-}
-
-/// One row of bottom-bar live hints.
+/// Bottom-bar hint row.
 class HintItem {
   const HintItem({required this.keyLabel, required this.action});
   final String keyLabel;
   final String action;
 }
 
-/// Immutable notebook view-state snapshot for widgets.
+/// Immutable UI snapshot for the shell.
 class NotebookViewState {
   const NotebookViewState({
-    this.history = const [],
+    this.timeline = const [],
     this.mode = InputMode.terminal,
     this.paletteOpen = false,
     this.statusFlash,
-    this.historyRevision = 0,
+    this.timelineRevision = 0,
   });
 
-  final List<NotebookHistoryEntry> history;
+  final List<TimelineEntry> timeline;
   final InputMode mode;
   final bool paletteOpen;
-
-  /// Brief bottom/top flash copy (freeze ok, empty draft, …).
   final String? statusFlash;
-
-  /// Bumps when history grows so the shell can scroll to end.
-  final int historyRevision;
+  final int timelineRevision;
 
   NotebookViewState copyWith({
-    List<NotebookHistoryEntry>? history,
+    List<TimelineEntry>? timeline,
     InputMode? mode,
     bool? paletteOpen,
     String? statusFlash,
     bool clearStatusFlash = false,
-    int? historyRevision,
+    int? timelineRevision,
   }) {
     return NotebookViewState(
-      history: history ?? this.history,
+      timeline: timeline ?? this.timeline,
       mode: mode ?? this.mode,
       paletteOpen: paletteOpen ?? this.paletteOpen,
       statusFlash:
           clearStatusFlash ? null : (statusFlash ?? this.statusFlash),
-      historyRevision: historyRevision ?? this.historyRevision,
+      timelineRevision: timelineRevision ?? this.timelineRevision,
     );
   }
 }

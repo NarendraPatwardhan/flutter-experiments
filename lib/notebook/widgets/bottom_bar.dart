@@ -4,7 +4,6 @@ import '../../vt/theme.dart';
 import '../chrome.dart';
 import '../model.dart';
 
-/// Context-sensitive bottom shortcuts strip.
 class NotebookBottomBar extends StatelessWidget {
   const NotebookBottomBar({
     super.key,
@@ -27,15 +26,13 @@ class NotebookBottomBar extends StatelessWidget {
       padding: const EdgeInsets.symmetric(horizontal: 10),
       decoration: const BoxDecoration(
         color: VtTheme.chromeBg,
-        border: Border(
-          top: BorderSide(color: VtTheme.chromeBorder, width: 1),
-        ),
+        border: Border(top: BorderSide(color: VtTheme.chromeBorder)),
       ),
       child: Row(
         children: [
           for (var i = 0; i < hints.length; i++) ...[
             if (i > 0)
-              Text('  ', style: NotebookChrome.dim(fam, size: 11)),
+              Text('  ·  ', style: NotebookChrome.dim(fam, size: 11)),
             Text(
               hints[i].keyLabel,
               style: NotebookChrome.mono(
@@ -49,11 +46,6 @@ class NotebookBottomBar extends StatelessWidget {
               ' ${hints[i].action}',
               style: NotebookChrome.dim(fam, size: 11),
             ),
-            if (i < hints.length - 1)
-              Text(
-                '  ·',
-                style: NotebookChrome.dim(fam, size: 11),
-              ),
           ],
           const Spacer(),
           if (flash != null && flash!.isNotEmpty)

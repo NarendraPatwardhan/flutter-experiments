@@ -8,7 +8,7 @@ import 'package:flutter/services.dart';
 import 'notebook/controller.dart';
 import 'notebook/host_keys.dart';
 import 'notebook/model.dart';
-import 'notebook/widgets/control_plane_stub.dart';
+import 'notebook/widgets/control_plane.dart';
 import 'notebook/widgets/notebook_shell.dart';
 import 'session/product_session.dart';
 import 'vt/metrics.dart';
@@ -40,8 +40,6 @@ class App extends StatelessWidget {
         useMaterial3: true,
         fontFamily: 'monospace',
         splashFactory: NoSplash.splashFactory,
-        highlightColor: const Color(0x1A7CDE9A),
-        hoverColor: const Color(0x147CDE9A),
       ),
       home: const HomePage(),
     );
@@ -75,17 +73,16 @@ class _HomePageState extends State<HomePage> with SingleTickerProviderStateMixin
   @override
   void initState() {
     super.initState();
-    _session = ProductSession()..addListener(_onSession);
+    _session = ProductSession()..addListener(_rebuild);
     _notebook = NotebookController()..addListener(_onNotebook);
     _nlText = TextEditingController();
-    _shellFocus = FocusNode(debugLabel: 'notebook-shell');
-    _nlFocus = FocusNode(debugLabel: 'nl-composer');
+    _shellFocus = FocusNode(debugLabel: 'shell');
+    _nlFocus = FocusNode(debugLabel: 'ask');
     _blink = AnimationController(
       vsync: this,
       duration: const Duration(milliseconds: 530),
     )..repeat(reverse: true);
 
-    // App-level handler: runs before Focus/VT routing so host chords always work.
     HardwareKeyboard.instance.addHandler(_onHardwareKey);
 
     SchedulerBinding.instance.addPostFrameCallback((_) {
@@ -106,17 +103,16 @@ class _HomePageState extends State<HomePage> with SingleTickerProviderStateMixin
     });
   }
 
-  void _onSession() {
+  void _rebuild() {
     if (mounted) setState(() {});
   }
 
   void _onNotebook() {
     if (!mounted) return;
     setState(() {});
-    final flash = _notebook.statusFlash;
-    if (flash != null) {
+    if (_notebook.statusFlash != null) {
       _flashTimer?.cancel();
-      _flashTimer = Timer(const Duration(milliseconds: 1600), () {
+      _flashTimer = Timer(const Duration(milliseconds: 1400), () {
         if (mounted) _notebook.clearStatusFlash();
       });
     }
@@ -132,19 +128,13 @@ class _HomePageState extends State<HomePage> with SingleTickerProviderStateMixin
     _shellFocus.dispose();
     _notebook.removeListener(_onNotebook);
     _notebook.dispose();
-    _session.removeListener(_onSession);
+    _session.removeListener(_rebuild);
     _session.dispose();
     super.dispose();
   }
 
-  /// Returns true = consume (do not deliver to Focus/TextField/guest).
   bool _onHardwareKey(KeyEvent event) {
-    if (!mounted) return false;
-    if (_notebook.paletteOpen) {
-      // Dialog owns keys while open.
-      return false;
-    }
-
+    if (!mounted || _notebook.paletteOpen) return false;
     final chord = classifyHostChord(event);
     if (chord == null) return false;
 
@@ -173,38 +163,33 @@ class _HomePageState extends State<HomePage> with SingleTickerProviderStateMixin
   ({String hostLib, String? vtLib, String kernel, String? image})?
       _locateAssets() {
     final exeDir = File(Platform.resolvedExecutable).parent.path;
-    String? pick(List<String> candidates) {
-      for (final p in candidates) {
+    String? pick(List<String> c) {
+      for (final p in c) {
         if (File(p).existsSync()) return p;
       }
       return null;
     }
 
-    final hostPath = pick([
+    final host = pick([
       '$exeDir/lib/libagentos_flutter_host.so',
       '$exeDir/libagentos_flutter_host.so',
     ]);
-    final vtPath = pick([
+    final vt = pick([
       '$exeDir/lib/libghostty-vt.so',
       '$exeDir/libghostty-vt.so',
     ]);
-    final kernelPath = pick([
+    final kernel = pick([
       '$exeDir/data/kernel.wasm',
       '$exeDir/kernel.wasm',
     ]);
-    final imagePath = pick([
+    final image = pick([
       '$exeDir/data/loom.tar',
       '$exeDir/data/posix.tar',
       '$exeDir/loom.tar',
       '$exeDir/posix.tar',
     ]);
-    if (hostPath == null || kernelPath == null) return null;
-    return (
-      hostLib: hostPath,
-      vtLib: vtPath,
-      kernel: kernelPath,
-      image: imagePath,
-    );
+    if (host == null || kernel == null) return null;
+    return (hostLib: host, vtLib: vt, kernel: kernel, image: image);
   }
 
   Future<void> _startSession() async {
@@ -215,8 +200,7 @@ class _HomePageState extends State<HomePage> with SingleTickerProviderStateMixin
     try {
       final assets = _locateAssets();
       if (assets == null) {
-        _bootError =
-            'missing libagentos_flutter_host.so or kernel.wasm (lib/ + data/)';
+        _bootError = 'missing host library or kernel.wasm';
         return;
       }
       if (assets.vtLib == null) {
@@ -272,39 +256,32 @@ class _HomePageState extends State<HomePage> with SingleTickerProviderStateMixin
   String get _statusText {
     if (_bootError != null && !_session.started) return _bootError!;
     if (!_session.started && !_session.busy) {
-      final assets = _locateAssets();
-      if (assets == null) {
-        return 'missing libagentos_flutter_host.so or kernel.wasm';
-      }
-      if (assets.vtLib == null) return 'missing libghostty-vt.so';
-      if (assets.image == null) return 'missing loom.tar / posix.tar';
+      final a = _locateAssets();
+      if (a == null) return 'missing host library or kernel';
+      if (a.vtLib == null) return 'missing libghostty-vt.so';
+      if (a.image == null) return 'missing guest image';
       return 'starting…';
     }
     return _session.statusLine;
   }
 
-  /// Guest terminal keys only (host chords handled in [_onHardwareKey]).
   KeyEventResult _onKey(FocusNode node, KeyEvent event) {
     if (_notebook.paletteOpen) return KeyEventResult.ignored;
     if (_notebook.mode == InputMode.naturalLanguage) {
       return KeyEventResult.ignored;
     }
-
-    // Belt-and-suspenders: never forward host chords if handler missed them.
-    if (classifyHostChord(event) != null) {
-      return KeyEventResult.handled;
-    }
+    if (classifyHostChord(event) != null) return KeyEventResult.handled;
 
     final mod = HardwareKeyboard.instance.isControlPressed ||
         HardwareKeyboard.instance.isMetaPressed;
     if (event is KeyDownEvent && mod) {
       if (event.logicalKey == LogicalKeyboardKey.keyV) {
-        unawaited(_pasteClipboard());
+        unawaited(_paste());
         return KeyEventResult.handled;
       }
       if (event.logicalKey == LogicalKeyboardKey.keyC &&
           HardwareKeyboard.instance.isShiftPressed) {
-        unawaited(_copySelection());
+        unawaited(_copy());
         return KeyEventResult.handled;
       }
     }
@@ -319,18 +296,18 @@ class _HomePageState extends State<HomePage> with SingleTickerProviderStateMixin
       setState(() {});
       return;
     }
-    _enterTerminalMode();
+    _enterTerminal();
   }
 
   void _toggleMode() {
     if (_notebook.mode == InputMode.terminal) {
-      _enterAskMode();
+      _enterAsk();
     } else {
-      _enterTerminalMode();
+      _enterTerminal();
     }
   }
 
-  void _enterAskMode() {
+  void _enterAsk() {
     _notebook.setMode(InputMode.naturalLanguage);
     setState(() => _terminalFocused = false);
     unawaited(_session.onFocus(false));
@@ -339,7 +316,7 @@ class _HomePageState extends State<HomePage> with SingleTickerProviderStateMixin
     });
   }
 
-  void _enterTerminalMode() {
+  void _enterTerminal() {
     _notebook.setMode(InputMode.terminal);
     setState(() => _terminalFocused = true);
     _shellFocus.requestFocus();
@@ -347,16 +324,15 @@ class _HomePageState extends State<HomePage> with SingleTickerProviderStateMixin
   }
 
   void _submitNl() {
-    final t = _nlText.text;
-    if (!_notebook.submitUserMessage(t)) return;
+    if (!_notebook.submitUserMessage(_nlText.text)) return;
     _nlText.clear();
-    _enterTerminalMode();
+    _enterTerminal();
   }
 
   Future<void> _openControlPlane() async {
     if (_notebook.paletteOpen) return;
     _notebook.setPaletteOpen(true);
-    await showControlPlaneStub(
+    await showControlPlane(
       context,
       onRestart: () => unawaited(_startSession()),
       fontFamily: _metrics.fontFamily,
@@ -370,14 +346,14 @@ class _HomePageState extends State<HomePage> with SingleTickerProviderStateMixin
     }
   }
 
-  Future<void> _copySelection() async {
+  Future<void> _copy() async {
     final text = await _session.copySelection();
     if (text != null && text.isNotEmpty) {
       await Clipboard.setData(ClipboardData(text: text));
     }
   }
 
-  Future<void> _pasteClipboard() async {
+  Future<void> _paste() async {
     final data = await Clipboard.getData(Clipboard.kTextPlain);
     final text = data?.text;
     if (text != null && text.isNotEmpty) {
@@ -394,7 +370,6 @@ class _HomePageState extends State<HomePage> with SingleTickerProviderStateMixin
   @override
   Widget build(BuildContext context) {
     final busy = _session.busy || _starting;
-
     return Focus(
       focusNode: _shellFocus,
       autofocus: true,
@@ -417,12 +392,8 @@ class _HomePageState extends State<HomePage> with SingleTickerProviderStateMixin
               title: 'agentos',
               nlController: _nlText,
               nlFocus: _nlFocus,
-              onRerun: () => unawaited(_startSession()),
+              onRestart: () => unawaited(_startSession()),
               onTerminalLayout: _onTerminalLayout,
-              onNlSubmit: (t) {
-                _nlText.value = TextEditingValue(text: t);
-                _submitNl();
-              },
             );
           },
         ),

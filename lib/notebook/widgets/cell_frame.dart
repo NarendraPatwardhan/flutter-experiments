@@ -3,9 +3,7 @@ import 'package:flutter/material.dart';
 import '../../vt/theme.dart';
 import '../chrome.dart';
 
-/// Shared chrome for every notebook cell (header + body).
-///
-/// Parent must give a bounded height (e.g. [SizedBox]) so the body can expand.
+/// Cell chrome: kind chip + body. Parent must bound height.
 class NotebookCellFrame extends StatelessWidget {
   const NotebookCellFrame({
     super.key,

@@ -3,7 +3,6 @@ import 'package:flutter/material.dart';
 import '../../vt/theme.dart';
 import '../chrome.dart';
 
-/// Fixed-height top status strip.
 class NotebookTopBar extends StatelessWidget {
   const NotebookTopBar({
     super.key,
@@ -12,7 +11,7 @@ class NotebookTopBar extends StatelessWidget {
     this.busy = false,
     this.bell = false,
     this.modeLabel,
-    this.onRerun,
+    this.onRestart,
     this.fontFamily,
   });
 
@@ -21,7 +20,7 @@ class NotebookTopBar extends StatelessWidget {
   final bool busy;
   final bool bell;
   final String? modeLabel;
-  final VoidCallback? onRerun;
+  final VoidCallback? onRestart;
   final String? fontFamily;
 
   static const double height = 28;
@@ -38,7 +37,6 @@ class NotebookTopBar extends StatelessWidget {
         border: Border(
           bottom: BorderSide(
             color: bell ? VtTheme.chromeBell : VtTheme.chromeBorder,
-            width: 1,
           ),
         ),
       ),
@@ -75,12 +73,12 @@ class NotebookTopBar extends StatelessWidget {
                 color: VtTheme.chromeDim,
               ),
             )
-          else if (onRerun != null)
+          else if (onRestart != null)
             Tooltip(
-              message: 'Restart guest session',
+              message: 'Restart session',
               waitDuration: const Duration(milliseconds: 400),
               child: TextButton(
-                onPressed: onRerun,
+                onPressed: onRestart,
                 style: TextButton.styleFrom(
                   foregroundColor: VtTheme.chromeDim,
                   padding: const EdgeInsets.symmetric(horizontal: 8),

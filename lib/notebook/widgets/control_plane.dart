@@ -4,8 +4,8 @@ import 'package:flutter/services.dart';
 import '../../vt/theme.dart';
 import '../chrome.dart';
 
-/// Control-plane aperture (Ctrl+K).
-Future<void> showControlPlaneStub(
+/// Control plane (Ctrl+K) — machine ops aperture.
+Future<void> showControlPlane(
   BuildContext context, {
   VoidCallback? onRestart,
   String? fontFamily,
@@ -13,20 +13,15 @@ Future<void> showControlPlaneStub(
   return showDialog<void>(
     context: context,
     barrierColor: const Color(0x990A0A0A),
-    builder: (ctx) {
-      return _ControlPlaneDialog(
-        onRestart: onRestart,
-        fontFamily: fontFamily,
-      );
-    },
+    builder: (ctx) => _ControlPlaneDialog(
+      onRestart: onRestart,
+      fontFamily: fontFamily,
+    ),
   );
 }
 
 class _ControlPlaneDialog extends StatefulWidget {
-  const _ControlPlaneDialog({
-    this.onRestart,
-    this.fontFamily,
-  });
+  const _ControlPlaneDialog({this.onRestart, this.fontFamily});
 
   final VoidCallback? onRestart;
   final String? fontFamily;
@@ -51,12 +46,12 @@ class _ControlPlaneDialogState extends State<_ControlPlaneDialog> {
       ),
     const _Item(
       label: 'Snapshots',
-      secondary: 'Save and restore full guest machine state',
+      secondary: 'Save and restore guest machine state',
       enabled: false,
     ),
     const _Item(
       label: 'Mounts',
-      secondary: 'Attach host paths and volumes into the guest',
+      secondary: 'Attach host paths into the guest',
       enabled: false,
     ),
     const _Item(
@@ -69,26 +64,24 @@ class _ControlPlaneDialogState extends State<_ControlPlaneDialog> {
   @override
   void initState() {
     super.initState();
-    // Prefer first enabled row.
     final first = _items.indexWhere((e) => e.enabled);
     if (first >= 0) _index = first;
   }
 
   void _move(int delta) {
-    final enabledIdx = <int>[];
-    for (var i = 0; i < _items.length; i++) {
-      if (_items[i].enabled) enabledIdx.add(i);
-    }
-    if (enabledIdx.isEmpty) return;
-    final cur = enabledIdx.indexOf(_index);
+    final enabled = <int>[
+      for (var i = 0; i < _items.length; i++)
+        if (_items[i].enabled) i,
+    ];
+    if (enabled.isEmpty) return;
+    final cur = enabled.indexOf(_index);
     final base = cur < 0 ? 0 : cur;
-    final next = enabledIdx[(base + delta) % enabledIdx.length];
-    setState(() => _index = next);
+    setState(() => _index = enabled[(base + delta) % enabled.length]);
   }
 
   void _activate() {
     final item = _items[_index];
-    if (item.enabled && item.run != null) item.run!();
+    if (item.enabled) item.run?.call();
   }
 
   @override
@@ -102,15 +95,14 @@ class _ControlPlaneDialogState extends State<_ControlPlaneDialog> {
         side: const BorderSide(color: VtTheme.chromeBorder),
       ),
       child: ConstrainedBox(
-        constraints: const BoxConstraints(maxWidth: 520, maxHeight: 400),
+        constraints: const BoxConstraints(maxWidth: 480, maxHeight: 360),
         child: Shortcuts(
           shortcuts: {
             LogicalKeySet(LogicalKeyboardKey.escape): const _CloseIntent(),
             LogicalKeySet(LogicalKeyboardKey.arrowDown): const _DownIntent(),
             LogicalKeySet(LogicalKeyboardKey.arrowUp): const _UpIntent(),
-            LogicalKeySet(LogicalKeyboardKey.enter): const _ActivateIntent(),
-            LogicalKeySet(LogicalKeyboardKey.numpadEnter):
-                const _ActivateIntent(),
+            LogicalKeySet(LogicalKeyboardKey.enter): const _RunIntent(),
+            LogicalKeySet(LogicalKeyboardKey.numpadEnter): const _RunIntent(),
           },
           child: Actions(
             actions: {
@@ -132,7 +124,7 @@ class _ControlPlaneDialogState extends State<_ControlPlaneDialog> {
                   return null;
                 },
               ),
-              _ActivateIntent: CallbackAction<_ActivateIntent>(
+              _RunIntent: CallbackAction<_RunIntent>(
                 onInvoke: (_) {
                   _activate();
                   return null;
@@ -155,8 +147,8 @@ class _ControlPlaneDialogState extends State<_ControlPlaneDialog> {
                     padding: const EdgeInsets.fromLTRB(16, 0, 16, 10),
                     child: Text(
                       'Operate the machine under this notebook',
-                      style:
-                          NotebookChrome.dim(fam, size: 12).copyWith(height: 1.3),
+                      style: NotebookChrome.dim(fam, size: 12)
+                          .copyWith(height: 1.3),
                     ),
                   ),
                   Expanded(
@@ -188,12 +180,12 @@ class _ControlPlaneDialogState extends State<_ControlPlaneDialog> {
                   Container(
                     height: 28,
                     padding: const EdgeInsets.symmetric(horizontal: 12),
+                    alignment: Alignment.centerLeft,
                     decoration: const BoxDecoration(
                       border: Border(
                         top: BorderSide(color: VtTheme.chromeBorder),
                       ),
                     ),
-                    alignment: Alignment.centerLeft,
                     child: Text(
                       '↑↓ move  ·  ↵ run  ·  Esc close',
                       style: NotebookChrome.dim(fam, size: 11),
@@ -234,8 +226,8 @@ class _UpIntent extends Intent {
   const _UpIntent();
 }
 
-class _ActivateIntent extends Intent {
-  const _ActivateIntent();
+class _RunIntent extends Intent {
+  const _RunIntent();
 }
 
 class _Row extends StatelessWidget {
@@ -259,12 +251,10 @@ class _Row extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    final bg =
-        active && enabled ? const Color(0x1A7CDE9A) : Colors.transparent;
     return MouseRegion(
       onEnter: onHover == null ? null : (_) => onHover!(),
       child: Material(
-        color: bg,
+        color: active && enabled ? const Color(0x1A7CDE9A) : Colors.transparent,
         borderRadius: BorderRadius.circular(4),
         child: InkWell(
           onTap: onTap,

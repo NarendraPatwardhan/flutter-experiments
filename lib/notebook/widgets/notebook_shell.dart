@@ -9,20 +9,16 @@ import '../expand_cap.dart';
 import '../model.dart';
 import 'bottom_bar.dart';
 import 'cell_frame.dart';
-import 'frozen_cell.dart';
 import 'live_terminal.dart';
 import 'nl_composer.dart';
+import 'timeline.dart';
 import 'top_bar.dart';
 
-/// Machine notebook geometry (agreed model):
+/// Client notebook surface.
 ///
-/// - **Empty history + terminal:** full-bleed active terminal (terminal-first).
-/// - **History present:** scrollable cells above (oldest top → newest above active);
-///   active cell pinned bottom, expand→cap.
-/// - **Ask mode:** active bottom is ask; live terminal sits in the region above
-///   (still one guest), history above that if any.
-///
-/// No fake void / "notebook" watermark.
+/// - Empty timeline + terminal: full-bleed live machine.
+/// - Timeline entries: scroll above; active surface bottom-capped.
+/// - Ask mode: live terminal above, ask cell active at bottom.
 class NotebookShell extends StatefulWidget {
   const NotebookShell({
     super.key,
@@ -35,9 +31,8 @@ class NotebookShell extends StatefulWidget {
     required this.busy,
     required this.nlController,
     required this.nlFocus,
-    required this.onRerun,
+    required this.onRestart,
     required this.onTerminalLayout,
-    required this.onNlSubmit,
     this.title = 'agentos',
   });
 
@@ -50,9 +45,8 @@ class NotebookShell extends StatefulWidget {
   final bool busy;
   final TextEditingController nlController;
   final FocusNode nlFocus;
-  final VoidCallback onRerun;
+  final VoidCallback onRestart;
   final void Function(int cols, int rows, EdgeInsets padding) onTerminalLayout;
-  final void Function(String text) onNlSubmit;
   final String title;
 
   @override
@@ -60,25 +54,25 @@ class NotebookShell extends StatefulWidget {
 }
 
 class _NotebookShellState extends State<NotebookShell> {
-  final ScrollController _historyScroll = ScrollController();
-  int _seenRevision = 0;
+  final ScrollController _scroll = ScrollController();
+  int _seenRev = 0;
 
   @override
   void dispose() {
-    _historyScroll.dispose();
+    _scroll.dispose();
     super.dispose();
   }
 
   @override
   void didUpdateWidget(covariant NotebookShell oldWidget) {
     super.didUpdateWidget(oldWidget);
-    final rev = widget.notebook.historyRevision;
-    if (rev != _seenRevision && widget.notebook.history.isNotEmpty) {
-      _seenRevision = rev;
+    final rev = widget.notebook.timelineRevision;
+    if (rev != _seenRev && widget.notebook.timeline.isNotEmpty) {
+      _seenRev = rev;
       SchedulerBinding.instance.addPostFrameCallback((_) {
-        if (!_historyScroll.hasClients) return;
-        _historyScroll.animateTo(
-          _historyScroll.position.maxScrollExtent,
+        if (!_scroll.hasClients) return;
+        _scroll.animateTo(
+          _scroll.position.maxScrollExtent,
           duration: const Duration(milliseconds: 160),
           curve: Curves.easeOut,
         );
@@ -86,7 +80,7 @@ class _NotebookShellState extends State<NotebookShell> {
     }
   }
 
-  Widget _liveTerminal({required bool focused}) {
+  Widget _live({required bool focused}) {
     return LiveTerminalView(
       session: widget.session,
       metrics: widget.metrics,
@@ -96,88 +90,58 @@ class _NotebookShellState extends State<NotebookShell> {
     );
   }
 
-  Widget _historyList(double bodyH) {
-    final history = widget.notebook.history;
-    final metrics = widget.metrics;
-    final cap = (bodyH * 0.45).clamp(120.0, 360.0);
-    return ListView.builder(
-      controller: _historyScroll,
-      padding: EdgeInsets.zero,
-      itemCount: history.length,
-      itemBuilder: (context, i) {
-        final e = history[i];
-        return switch (e) {
-          FrozenTerminalEntry(:final cell) => FrozenTerminalCellView(
-              cell: cell,
-              metrics: metrics,
-              maxHeight: cap,
-            ),
-          UserMessageEntry(:final cell) => UserMessageCellView(
-              cell: cell,
-              fontFamily: metrics.fontFamily,
-            ),
-          SystemNoticeEntry(:final cell) => SystemNoticeCellView(
-              cell: cell,
-              fontFamily: metrics.fontFamily,
-            ),
-        };
-      },
-    );
+  String? get _gridMeta {
+    final c = widget.session.frame.cols;
+    final r = widget.session.frame.rows;
+    if (c <= 0 || r <= 0) return null;
+    return '${c}×$r';
   }
 
-  /// Active terminal cell (framed) filling [height] or expanding.
-  Widget _terminalActive({required bool expand, double? height}) {
-    final fam = widget.metrics.fontFamily;
-    final cols = widget.session.frame.cols;
-    final rows = widget.session.frame.rows;
-    final sizeMeta = cols > 0 ? '${cols}×$rows' : null;
+  Widget _terminalCell({
+    required bool expand,
+    double? height,
+    required bool focused,
+    String? meta,
+  }) {
     final frame = NotebookCellFrame(
       kindLabel: 'terminal',
-      metaRight: sizeMeta,
-      active: widget.terminalFocused,
-      fontFamily: fam,
-      child: _liveTerminal(focused: widget.terminalFocused),
+      metaRight: meta ?? _gridMeta,
+      active: focused,
+      fontFamily: widget.metrics.fontFamily,
+      child: _live(focused: focused),
     );
-    if (expand) {
-      return Expanded(child: frame);
-    }
+    if (expand) return Expanded(child: frame);
     return SizedBox(height: height, child: frame);
   }
 
-  Widget _askActive(double bodyH) {
+  Widget _askStack(double bodyH) {
     final fam = widget.metrics.fontFamily;
-    // Ask sits at bottom with expand-cap; live terminal fills remainder above.
-    final askH = ExpandCap.clampHeight(
+    final askBody = ExpandCap.clampHeight(
       desired: bodyH * 0.28,
       viewportHeight: bodyH,
       minHeight: 120,
       maxFraction: 0.40,
     );
+    final askH = askBody + NotebookCellFrame.headerHeight;
+
     return Column(
       crossAxisAlignment: CrossAxisAlignment.stretch,
       children: [
-        Expanded(
-          child: NotebookCellFrame(
-            kindLabel: 'terminal',
-            metaRight: 'live',
-            active: false,
-            fontFamily: fam,
-            child: _liveTerminal(focused: false),
-          ),
+        _terminalCell(
+          expand: true,
+          focused: false,
+          meta: 'live',
         ),
         SizedBox(
-          height: askH + NotebookCellFrame.headerHeight,
+          height: askH,
           child: NotebookCellFrame(
             kindLabel: 'ask',
-            metaRight: 'active',
             active: true,
             fontFamily: fam,
             child: NlComposer(
               controller: widget.nlController,
               focusNode: widget.nlFocus,
-              onSubmit: widget.onNlSubmit,
               fontFamily: fam,
-              viewportHeight: askH,
             ),
           ),
         ),
@@ -185,12 +149,31 @@ class _NotebookShellState extends State<NotebookShell> {
     );
   }
 
+  Widget _timeline() {
+    final items = widget.notebook.timeline;
+    final fam = widget.metrics.fontFamily;
+    return ListView.builder(
+      controller: _scroll,
+      padding: EdgeInsets.zero,
+      itemCount: items.length,
+      itemBuilder: (context, i) {
+        final e = items[i];
+        return switch (e) {
+          UserMessageEntry(:final message) => UserMessageCell(
+              message: message,
+              fontFamily: fam,
+            ),
+        };
+      },
+    );
+  }
+
   @override
   Widget build(BuildContext context) {
     final notebook = widget.notebook;
     final mode = notebook.mode;
-    final historyEmpty = notebook.history.isEmpty;
-    final metrics = widget.metrics;
+    final empty = notebook.timeline.isEmpty;
+    final fam = widget.metrics.fontFamily;
 
     return ColoredBox(
       color: VtTheme.background,
@@ -203,25 +186,28 @@ class _NotebookShellState extends State<NotebookShell> {
             busy: widget.busy,
             bell: widget.session.bellFlash,
             modeLabel: notebook.modeChipLabel(),
-            onRerun: widget.busy ? null : widget.onRerun,
-            fontFamily: metrics.fontFamily,
+            onRestart: widget.busy ? null : widget.onRestart,
+            fontFamily: fam,
           ),
           Expanded(
             child: LayoutBuilder(
               builder: (context, constraints) {
                 final bodyH = constraints.maxHeight;
 
-                // --- Terminal-first cold start: full-bleed active terminal ---
-                if (historyEmpty && mode == InputMode.terminal) {
-                  return _terminalActive(expand: true);
+                // Cold start, terminal mode: full-bleed machine.
+                if (empty && mode == InputMode.terminal) {
+                  return _terminalCell(
+                    expand: true,
+                    focused: widget.terminalFocused,
+                  );
                 }
 
-                // --- Ask with no history yet: terminal + ask stacked ---
-                if (historyEmpty && mode == InputMode.naturalLanguage) {
-                  return _askActive(bodyH);
+                // Ask with empty timeline: terminal + ask.
+                if (empty && mode == InputMode.naturalLanguage) {
+                  return _askStack(bodyH);
                 }
 
-                // --- History present: timeline above, active bottom-capped ---
+                // Timeline + bottom-capped active surface.
                 final activeH = ExpandCap.clampHeight(
                   desired: bodyH * 0.5,
                   viewportHeight: bodyH,
@@ -232,13 +218,17 @@ class _NotebookShellState extends State<NotebookShell> {
                 return Column(
                   crossAxisAlignment: CrossAxisAlignment.stretch,
                   children: [
-                    Expanded(child: _historyList(bodyH)),
+                    Expanded(child: _timeline()),
                     if (mode == InputMode.terminal)
-                      _terminalActive(expand: false, height: activeH)
+                      _terminalCell(
+                        expand: false,
+                        height: activeH,
+                        focused: widget.terminalFocused,
+                      )
                     else
                       SizedBox(
                         height: activeH,
-                        child: _askActive(activeH),
+                        child: _askStack(activeH),
                       ),
                   ],
                 );
@@ -248,7 +238,7 @@ class _NotebookShellState extends State<NotebookShell> {
           NotebookBottomBar(
             hints: notebook.hintsForCurrent(),
             flash: notebook.statusFlash,
-            fontFamily: metrics.fontFamily,
+            fontFamily: fam,
           ),
         ],
       ),

@@ -139,7 +139,7 @@ class VtFrame {
     );
   }
 
-  /// Deep copy for notebook freeze: later live frames must not mutate paint.
+  /// Deep copy for immutable timeline snapshots: later live frames must not mutate paint.
   VtFrame clone() {
     return VtFrame(
       cols: cols,
