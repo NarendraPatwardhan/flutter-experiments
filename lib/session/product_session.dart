@@ -513,6 +513,9 @@ class ProductSession extends ChangeNotifier {
       // Erase screen + scrollback; home cursor. Does not reset the guest shell.
       vt.writeText('\x1b[2J\x1b[3J\x1b[H');
       _compress.onWrite(vt.native, vt.handle);
+      try {
+        vt.scrollViewport(bottom: true);
+      } catch (_) {}
       _frame = vt.snapshot(previous: _frame).copyWithMeta(
             cursorVisible: true,
           );
@@ -659,9 +662,11 @@ class ProductSession extends ChangeNotifier {
   }
 
   /// Scroll viewport by pixel [dy] (negative = wheel up → history).
+  /// Used for **in-cell** scroll of the live terminal (not notebook page scroll).
   Future<void> onScroll(double dy) async {
     if (_closed || _vt == null || dy == 0) return;
-    final rows = (dy.abs() / 12).ceil().clamp(1, 32);
+    // Trackpad/mouse: dy > 0 is wheel down (toward present); dy < 0 is up (history).
+    final rows = (dy.abs() / widgetCellScrollPx()).ceil().clamp(1, 48);
     final delta = dy < 0 ? -rows : rows;
     try {
       _vt!.scrollViewport(deltaRows: delta);
@@ -673,6 +678,9 @@ class ProductSession extends ChangeNotifier {
       notifyListeners();
     }
   }
+
+  /// Pixels per scroll row — roughly one mono line.
+  double widgetCellScrollPx() => _cellH > 0 ? _cellH.toDouble() : 14.0;
 
   Future<void> resize(
     int cols,

@@ -237,8 +237,10 @@ class VtMetrics {
   ({int cols, int rows, EdgeInsets padding}) fit(
     Size size, {
     EdgeInsets explicit = const EdgeInsets.fromLTRB(2, 2, 2, 2),
-    int minCols = 40,
-    int minRows = 12,
+    // Notebook cells are short — never invent rows/cols larger than the box
+    // (old minRows:12 made the grid paint outside the cell with no scroll).
+    int minCols = 2,
+    int minRows = 1,
   }) {
     final availW = math.max(0.0, size.width - explicit.horizontal);
     final availH = math.max(0.0, size.height - explicit.vertical);
